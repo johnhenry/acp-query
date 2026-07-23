@@ -13,7 +13,10 @@ import { client, type ClientApp, type ClientConnection } from "@agentclientproto
 import {
   InteractionBroker,
   QueryCache,
+  StatusStore,
   type BaseDecision,
+  type ConnectivityState,
+  type DevtoolsSink,
 } from "@johnhenry/agent-query-core";
 
 // ── decision & state shapes ──────────────────────────────────────────────────
@@ -75,6 +78,19 @@ export const sessionTag = (id: string): string => `session:${id}`;
 
 // ── config ───────────────────────────────────────────────────────────────────
 
+/**
+ * Compact, serializable devtools event vocabulary emitted when
+ * `AcpQueryConfig.devtools` is configured. See docs/design.md for the table.
+ */
+export type AcpDevtoolsEvent =
+  | { type: "acp:turn-start"; sessionId: string }
+  | { type: "acp:turn-end"; sessionId: string; stopReason: string }
+  | { type: "acp:update"; sessionId: string; kind: string }
+  | { type: "acp:permission-request"; sessionId: string; options: number }
+  | { type: "acp:permission-decision"; sessionId: string; outcome: "selected" | "cancelled"; optionId?: string }
+  | { type: "acp:status"; peer: string; state: ConnectivityState }
+  | { type: "acp:cancel"; sessionId: string };
+
 export interface AcpQueryConfig {
   /** Client identity advertised to agents. */
   name?: string;
@@ -84,6 +100,18 @@ export interface AcpQueryConfig {
    * option (or cancels), "ask" queues for the UI (resolve with an optionId).
    */
   interactions?: InteractionBroker<PermissionDecision>;
+  /**
+   * Peer-connectivity store. Defaults to a fresh `StatusStore`; inject a
+   * shared one to aggregate acpq's agent alongside other adapters' peers.
+   * The peer name is the `connect()` label (`ConnectOptions.name`).
+   */
+  status?: StatusStore;
+  /**
+   * Devtools sink (e.g. a `DevtoolsHub`). When configured, acpq emits the
+   * compact `AcpDevtoolsEvent` vocabulary (turn/update/permission/status/
+   * cancel). No-op when absent.
+   */
+  devtools?: DevtoolsSink<AcpDevtoolsEvent>;
 }
 
 export interface ConnectOptions {
@@ -99,12 +127,22 @@ export interface ConnectOptions {
 export class AcpQuery {
   readonly cache: QueryCache<AcpKey>;
   readonly interactions?: InteractionBroker<PermissionDecision>;
+  /**
+   * Per-peer connectivity (peer = the `connect()` label). Lifecycle:
+   * "connecting" on connect(), "ready" after the first successful request
+   * over the connection, "closed" on close() or when the connection dies.
+   */
+  readonly status: StatusStore;
   readonly app: ClientApp;
   private conn?: ClientConnection;
   private agentName = "agent";
+  private connReady = false;
+  private devtools?: DevtoolsSink<AcpDevtoolsEvent>;
 
   constructor(cfg: AcpQueryConfig = {}) {
     this.interactions = cfg.interactions;
+    this.status = cfg.status ?? new StatusStore();
+    this.devtools = cfg.devtools;
     this.cache = new QueryCache<AcpKey>({ serializeKey: serializeAcpKey });
     this.app = client({ name: cfg.name ?? "acpq" })
       .onNotification("session/update", (cx) => {
@@ -136,9 +174,17 @@ export class AcpQuery {
     const conn = this.app.connect(agentOrStream as never);
     this.conn = conn;
     this.agentName = opts.name ?? "agent";
+    this.connReady = false;
+    // connect() is synchronous and performs no I/O (the SDK sends nothing
+    // until the first request), so "connecting" is the honest state here;
+    // "ready" is set by the first successful request over this connection.
+    this.setStatus("connecting");
     // If the connection dies out from under us, allow a fresh connect().
     const clear = () => {
-      if (this.conn === conn) this.conn = undefined;
+      if (this.conn === conn) {
+        this.conn = undefined;
+        this.setStatus("closed");
+      }
     };
     conn.closed.then(clear, clear);
     return conn;
@@ -149,8 +195,22 @@ export class AcpQuery {
     const conn = this.conn;
     if (!conn) return;
     this.conn = undefined;
+    this.setStatus("closed");
     conn.close();
     await conn.closed.catch(() => {});
+  }
+
+  private setStatus(state: ConnectivityState): void {
+    this.status.set(this.agentName, { state });
+    this.devtools?.emit({ type: "acp:status", peer: this.agentName, state });
+  }
+
+  /** First successful request over the current connection ⇒ peer is "ready". */
+  private markReady(): void {
+    if (this.conn && !this.connReady) {
+      this.connReady = true;
+      this.setStatus("ready");
+    }
   }
 
   private get agent() {
@@ -164,6 +224,7 @@ export class AcpQuery {
     const res = (await this.agent.request("session/new", { cwd, mcpServers: [] })) as {
       sessionId: string;
     };
+    this.markReady();
     this.write(this.ensureState(res.sessionId));
     return res.sessionId;
   }
@@ -171,12 +232,22 @@ export class AcpQuery {
   /**
    * Send a prompt turn. Updates stream into the session state as they arrive;
    * resolves with the stop reason (also recorded on the state).
+   *
+   * Deliberately NOT wrapped in `withRetry`: a prompt turn is non-idempotent
+   * (the agent may have streamed text, run tools, or asked permissions before
+   * the failure), and the core's retry contract (`withRetry` — retries only
+   * with an explicit `idempotent: true` assertion) forbids retrying such a
+   * call. Recovery from a failed turn is the app's decision: re-prompt or
+   * start a fresh session.
    */
   async prompt(sessionId: string, text: string): Promise<string> {
+    this.devtools?.emit({ type: "acp:turn-start", sessionId });
     const res = (await this.agent.request("session/prompt", {
       sessionId,
       prompt: [{ type: "text", text }],
     })) as { stopReason: string };
+    this.markReady();
+    this.devtools?.emit({ type: "acp:turn-end", sessionId, stopReason: res.stopReason });
     // Fold-style read-modify-write with NO awaits between read and write:
     // ensureState() clones the *latest* snapshot (any session/update folds
     // that landed while we awaited the response are already in it), we set the
@@ -200,6 +271,7 @@ export class AcpQuery {
    */
   async cancel(sessionId: string): Promise<void> {
     await this.agent.notify("session/cancel", { sessionId });
+    this.devtools?.emit({ type: "acp:cancel", sessionId });
     if (this.interactions) {
       for (const pending of this.interactions.list()) {
         if (
@@ -252,6 +324,7 @@ export class AcpQuery {
     const state = this.ensureState(sessionId);
     state.updates = [...state.updates, update];
     const kind = String(update.sessionUpdate ?? "");
+    this.devtools?.emit({ type: "acp:update", sessionId, kind });
     switch (kind) {
       case "agent_message_chunk": {
         const content = update.content as { type?: string; text?: string } | undefined;
@@ -303,6 +376,26 @@ export class AcpQuery {
    * 4. no matching option → `{outcome: "cancelled"}`
    */
   private async decidePermission(params: {
+    sessionId: string;
+    toolCall?: unknown;
+    options: PermissionOption[];
+  }): Promise<{ outcome: { outcome: "selected"; optionId: string } | { outcome: "cancelled" } }> {
+    this.devtools?.emit({
+      type: "acp:permission-request",
+      sessionId: params.sessionId,
+      options: params.options.length,
+    });
+    const result = await this.resolvePermission(params);
+    this.devtools?.emit({
+      type: "acp:permission-decision",
+      sessionId: params.sessionId,
+      outcome: result.outcome.outcome,
+      ...(result.outcome.outcome === "selected" ? { optionId: result.outcome.optionId } : {}),
+    });
+    return result;
+  }
+
+  private async resolvePermission(params: {
     sessionId: string;
     toolCall?: unknown;
     options: PermissionOption[];
