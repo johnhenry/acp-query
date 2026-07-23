@@ -18,9 +18,22 @@ import {
 
 // ── decision & state shapes ──────────────────────────────────────────────────
 
-/** Broker decision for a permission request: approve with the chosen optionId. */
+/**
+ * Broker decision for a permission request.
+ *
+ * - `optionId` — explicitly select one of the agent's offered options
+ *   (wins over `action`-based mapping).
+ * - `cancelled` — respond with ACP's `{outcome: "cancelled"}` regardless of
+ *   `action`. This is the marker `cancel()` uses to honor the spec's contract
+ *   that pending permission requests are answered `cancelled` after
+ *   `session/cancel`.
+ * - otherwise `action: "approve"` maps to the first allow_* option and
+ *   `action: "deny"` to the first reject_* option; when no matching option
+ *   exists the response degrades to `{outcome: "cancelled"}`.
+ */
 export interface PermissionDecision extends BaseDecision {
   optionId?: string;
+  cancelled?: boolean;
 }
 
 export interface PermissionOption {
@@ -73,6 +86,14 @@ export interface AcpQueryConfig {
   interactions?: InteractionBroker<PermissionDecision>;
 }
 
+export interface ConnectOptions {
+  /**
+   * Label for this agent as the broker's `peer` — what policy callbacks,
+   * the approval inbox, and the audit trail see. Default `"agent"`.
+   */
+  name?: string;
+}
+
 // ── the store/client ─────────────────────────────────────────────────────────
 
 export class AcpQuery {
@@ -100,15 +121,36 @@ export class AcpQuery {
       });
   }
 
-  /** Connect to an agent: a transport stream or an in-process AgentApp. */
-  connect(agentOrStream: Parameters<ClientApp["connect"]>[0]): ClientConnection {
+  /**
+   * Connect to an agent: a transport stream or an in-process AgentApp.
+   *
+   * One connection at a time — call `close()` before connecting again
+   * (a second `connect()` while connected throws). `opts.name` labels the
+   * agent in broker interactions and audit entries.
+   */
+  connect(agentOrStream: Parameters<ClientApp["connect"]>[0], opts: ConnectOptions = {}): ClientConnection {
+    if (this.conn) {
+      throw new Error("AcpQuery: already connected — close() before connecting again");
+    }
     // The SDK overloads connect(stream) | connect(agentApp); both accepted here.
-    this.conn = this.app.connect(agentOrStream as never);
-    return this.conn;
+    const conn = this.app.connect(agentOrStream as never);
+    this.conn = conn;
+    this.agentName = opts.name ?? "agent";
+    // If the connection dies out from under us, allow a fresh connect().
+    const clear = () => {
+      if (this.conn === conn) this.conn = undefined;
+    };
+    conn.closed.then(clear, clear);
+    return conn;
   }
 
+  /** Close the connection (if any) and wait until it has fully shut down. */
   async close(): Promise<void> {
-    this.conn?.close();
+    const conn = this.conn;
+    if (!conn) return;
+    this.conn = undefined;
+    conn.close();
+    await conn.closed.catch(() => {});
   }
 
   private get agent() {
@@ -135,15 +177,43 @@ export class AcpQuery {
       sessionId,
       prompt: [{ type: "text", text }],
     })) as { stopReason: string };
+    // Fold-style read-modify-write with NO awaits between read and write:
+    // ensureState() clones the *latest* snapshot (any session/update folds
+    // that landed while we awaited the response are already in it), we set the
+    // stop reason, and write synchronously — nothing can interleave between
+    // the read and the write, and a fold arriving afterwards re-reads this
+    // state, so neither side clobbers the other.
     const state = this.ensureState(sessionId);
     state.lastStopReason = res.stopReason;
     this.write(state);
     return res.stopReason;
   }
 
-  /** Cancel the current turn (agent must finish with stopReason "cancelled"). */
+  /**
+   * Cancel the current turn (agent must finish with stopReason "cancelled").
+   *
+   * Per the ACP spec, after sending `session/cancel` the client MUST respond
+   * to that session's pending `session/request_permission` requests with
+   * `{outcome: "cancelled"}` — so this also resolves any pending broker
+   * interactions of type "permission" for this session with a cancelled
+   * decision (audited as denied, reason "session/cancel").
+   */
   async cancel(sessionId: string): Promise<void> {
     await this.agent.notify("session/cancel", { sessionId });
+    if (this.interactions) {
+      for (const pending of this.interactions.list()) {
+        if (
+          pending.type === "permission" &&
+          (pending.payload as { sessionId?: string } | undefined)?.sessionId === sessionId
+        ) {
+          this.interactions.resolve(pending.id, {
+            action: "deny",
+            cancelled: true,
+            reason: "session/cancel",
+          });
+        }
+      }
+    }
   }
 
   // ── reactive access (hooks-ready) ─────────────────────────────────────────
@@ -170,7 +240,14 @@ export class AcpQuery {
     });
   }
 
-  /** Fold one session/update notification into the session state. */
+  /**
+   * Fold one session/update notification into the session state.
+   *
+   * Note: an update for a sessionId this store has never seen creates its
+   * state implicitly — agents may stream updates for sessions established
+   * elsewhere (e.g. `session/load`) before this store knows about them. The
+   * implicit state is indistinguishable from one created by `newSession()`.
+   */
   private fold(sessionId: string, update: Record<string, unknown>): void {
     const state = this.ensureState(sessionId);
     state.updates = [...state.updates, update];
@@ -216,7 +293,15 @@ export class AcpQuery {
     this.write(state);
   }
 
-  /** Route a permission request through the broker (or auto-answer sanely). */
+  /**
+   * Route a permission request through the broker (or auto-answer sanely).
+   *
+   * Decision → wire mapping (in precedence order):
+   * 1. `decision.cancelled` → `{outcome: "cancelled"}`
+   * 2. explicit `decision.optionId` → `{outcome: "selected", optionId}`
+   * 3. `action: "approve"` → first allow_* option; `"deny"` → first reject_*
+   * 4. no matching option → `{outcome: "cancelled"}`
+   */
   private async decidePermission(params: {
     sessionId: string;
     toolCall?: unknown;
@@ -238,6 +323,7 @@ export class AcpQuery {
       autoApprove: allow ? { action: "approve", optionId: allow.optionId } : { action: "approve" },
       autoDeny: reject ? { action: "deny", optionId: reject.optionId } : { action: "deny" },
     });
+    if (decision.cancelled) return { outcome: { outcome: "cancelled" } };
     const optionId =
       decision.optionId ?? (decision.action === "approve" ? allow?.optionId : reject?.optionId);
     return optionId
