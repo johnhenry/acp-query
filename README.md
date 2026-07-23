@@ -39,10 +39,12 @@ await q.prompt(sid, "refactor the auth module");
   (including the permission decision → wire mapping and the mock agent's helpers).
 - **[Design](./docs/design.md)** — why ACP is a stream-**fold**, not a cache; the
   fold vocabulary; the full policy × options → outcome permission table; the
-  cancel contract; what the SDK provides vs what acpq adds.
-- **[`examples/`](./examples)** — six graded, runnable examples (in-process mock
+  cancel contract; observability (status semantics, devtools events, why
+  `prompt()` is never retried); what the SDK provides vs what acpq adds.
+- **[`examples/`](./examples)** — seven graded, runnable examples (in-process mock
   agent, no transport): basic turn → tool calls → permission inbox → policy
-  rules → multi-session → cancel. `npm run example:01` … `example:06`.
+  rules → multi-session → cancel → devtools timeline.
+  `npm run example:01` … `example:07`.
 
 Cancellation honors the ACP contract end to end: `cancel(sessionId)` sends
 `session/cancel` **and** resolves that session's pending permission requests

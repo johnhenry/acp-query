@@ -7,6 +7,8 @@ The complete public surface of `@johnhenry/acpq`. Conceptual background lives in
   - [Construction](#construction) · [`connect` / `close`](#connect--close)
   - [`newSession` / `prompt` / `cancel`](#newsession--prompt--cancel)
   - [`session` / `subscribe`](#session--subscribe-reactive-access)
+  - [`status` — peer connectivity](#status--peer-connectivity)
+  - [Devtools events](#devtools-events)
 - [`SessionState` & `ToolCallState`](#sessionstate--toolcallstate)
 - [Permissions: `PermissionDecision`, `PermissionOption`](#permissions)
 - [Cache keys: `AcpKey`, `serializeAcpKey`, `sessionTag`](#cache-keys)
@@ -29,15 +31,19 @@ import { AcpQuery, InteractionBroker } from "@johnhenry/acpq";
 
 const q = new AcpQuery({
   name: "my-editor",                    // client identity advertised to agents (default "acpq")
-  interactions: new InteractionBroker() // optional permission broker — see below
+  interactions: new InteractionBroker(),// optional permission broker — see below
+  status: sharedStatusStore,            // optional; default: a fresh StatusStore
+  devtools: new DevtoolsHub(),          // optional devtools sink; no-op when absent
 });
 ```
 
-`AcpQueryConfig`: `{ name?: string; interactions?: InteractionBroker<PermissionDecision> }`.
+`AcpQueryConfig`: `{ name?: string; interactions?: InteractionBroker<PermissionDecision>;
+status?: StatusStore; devtools?: DevtoolsSink<AcpDevtoolsEvent> }`.
 
 Public readonly fields: `q.cache` (the `QueryCache<AcpKey>`), `q.interactions`,
-`q.app` (the underlying SDK `ClientApp`, for advanced composition — e.g.
-registering additional handlers before connecting).
+`q.status` (the `StatusStore` — see below), `q.app` (the underlying SDK
+`ClientApp`, for advanced composition — e.g. registering additional handlers
+before connecting).
 
 ### `connect` / `close`
 
@@ -93,6 +99,68 @@ const unsub = q.subscribe(sid, () => {
   works and the pair is `useSyncExternalStore`-ready.
 - `subscribe(sessionId, fn): () => void` — notify on every state change;
   returns the unsubscribe function.
+
+### `status` — peer connectivity
+
+`q.status` is a `StatusStore` (from agent-query-core) tracking the agent's
+connectivity under the peer name given to `connect()` (`ConnectOptions.name`,
+default `"agent"`). Inject a shared store via `AcpQueryConfig.status` to
+aggregate acpq's peer alongside other adapters'.
+
+Lifecycle: **`connecting`** when `connect()` is called (the SDK's `connect()`
+is synchronous and performs no I/O — nothing goes over the wire until the
+first request, so "connecting" is the honest state at that point);
+**`ready`** after the first successful request over the connection
+(`newSession()` or `prompt()` resolving — the earliest reliable signal that
+the peer is actually answering); **`closed`** on `close()` *and* when the
+connection dies out from under us; a reconnect walks
+`connecting → ready` again.
+
+```ts
+import { AcpQuery, StatusStore } from "@johnhenry/acpq";
+
+const status = new StatusStore(); // or share one across adapters
+const q = new AcpQuery({ status });
+q.connect(agent, { name: "claude-code" });
+q.status.get("claude-code");                 // { state: "connecting", since, attempt }
+const un = q.status.subscribe(() => render(q.status.list()));
+await q.newSession();                        // → state "ready"
+await q.close();                             // → state "closed"
+```
+
+**No retry on `prompt()`.** A prompt turn is non-idempotent — by the time a
+request fails the agent may already have streamed text, run tools, or asked
+permissions — so acpq never retries it, honoring the core's `withRetry`
+contract (retries only under an explicit `idempotent: true` assertion).
+Recovery is the app's call: re-prompt or start a fresh session.
+
+### Devtools events
+
+Pass any `DevtoolsSink` (canonically a `DevtoolsHub`) as
+`AcpQueryConfig.devtools` and acpq emits compact, serializable events; with no
+sink configured, emission is a no-op. The vocabulary (`AcpDevtoolsEvent`):
+
+| `type` | Payload | Emitted |
+|---|---|---|
+| `acp:turn-start` | `{sessionId}` | `prompt()` called |
+| `acp:turn-end` | `{sessionId, stopReason}` | `prompt()` resolved |
+| `acp:update` | `{sessionId, kind}` | per folded `session/update` (`kind` = the `sessionUpdate` discriminator) |
+| `acp:permission-request` | `{sessionId, options: count}` | `session/request_permission` received |
+| `acp:permission-decision` | `{sessionId, outcome: "selected" \| "cancelled", optionId?}` | the wire answer, broker-mediated or not |
+| `acp:status` | `{peer, state}` | every connectivity transition |
+| `acp:cancel` | `{sessionId}` | `cancel()` sent `session/cancel` |
+
+```ts
+import { AcpQuery, DevtoolsHub, type AcpDevtoolsEvent } from "@johnhenry/acpq";
+
+const hub = new DevtoolsHub<AcpDevtoolsEvent>();
+const q = new AcpQuery({ devtools: hub });
+hub.subscribe(() => console.log(hub.events().at(-1)));
+// e.g. {type: "acp:update", sessionId: "sess-1", kind: "agent_message_chunk"}
+```
+
+See [`examples/07-devtools-timeline.ts`](../examples/07-devtools-timeline.ts)
+for a full turn rendered as an indented timeline.
 
 ## `SessionState` & `ToolCallState`
 
@@ -180,8 +248,9 @@ q.cache.getSnapshot(key);  // the full CacheEntry (version, tags, …), not just
 ## Re-exports from agent-query-core
 
 For convenience, the shared engine's primitives are re-exported so most apps
-need a single import: `InteractionBroker`, `QueryCache` (values) and
-`AuditEntry`, `BaseDecision`, `Interaction`, `PolicyVerdict` (types).
+need a single import: `DevtoolsHub`, `InteractionBroker`, `QueryCache`,
+`StatusStore` (values) and `AuditEntry`, `BaseDecision`, `ConnectivityState`,
+`DevtoolsSink`, `Interaction`, `PeerStatus`, `PolicyVerdict` (types).
 
 ## `@johnhenry/acpq/testing` — `mockAcpAgent`
 
