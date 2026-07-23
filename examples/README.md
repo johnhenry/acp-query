@@ -13,6 +13,8 @@ protocol routing. Run any with `npx tsx examples/<file>` (or `npm run example:NN
 | 04 | [`04-policy-rules.ts`](./04-policy-rules.ts) | trust-policy auto-answers (allow_always grants, auto-deny) | `npm run example:04` |
 | 05 | [`05-multi-session.ts`](./05-multi-session.ts) | two sessions, concurrent turns, isolated folded states | `npm run example:05` |
 | 06 | [`06-cancel.ts`](./06-cancel.ts) | cancel mid-turn: pending permission resolved cancelled, stopReason "cancelled" | `npm run example:06` |
+| 07 | [`07-devtools-timeline.ts`](./07-devtools-timeline.ts) | DevtoolsHub events rendered as an indented turn timeline | `npm run example:07` |
+| 08 | [`08-client-capabilities.ts`](./08-client-capabilities.ts) | fs + terminal callbacks, capability advertising, gated writes | `npm run example:08` |
 
 To point any of these at a **real** agent, replace the `mockAcpAgent(...)` argument
 with a transport stream (`ndJsonStream` over a spawned agent's stdio, a WebSocket, …)

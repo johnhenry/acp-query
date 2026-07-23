@@ -167,6 +167,38 @@ Permission events are emitted at the wire boundary, so every path — broker
 `ask`, auto policy, no-broker fail-safe, and the cancel sweep — produces the
 same request/decision pair. When no sink is configured, nothing is emitted.
 
+## Client capabilities: default OFF, user callbacks only
+
+ACP inverts the usual direction for two method groups: `fs/*` and `terminal/*`
+are requests the **agent** makes of the **client** — "read this file for me",
+"run this command". That is server-side exec/filesystem access, and acpq's
+standing rule for such surfaces is: **default OFF, explicit opt-in, nothing
+built in.**
+
+Concretely:
+
+- With no `fs`/`terminal` config, the handlers are **never registered** — the
+  agent's request fails as an unhandled method, and `clientCapabilities()`
+  advertises nothing, so a spec-abiding agent won't even try.
+- acpq ships **no** node-fs or child_process backend. The config accepts
+  *your* callbacks (in-memory fakes in the tests and examples; `node:fs` or a
+  browser shim in a real client) and does exactly two things with them: route
+  the agent's schema-validated requests in, and advertise the corresponding
+  capability flags in `initialize()`.
+- Capability advertising is *derived*, never asserted: per-callback `fs`
+  flags; `terminal: true` only when the full five-method group is supplied
+  (the spec's `terminal` capability means "all `terminal/*` methods").
+
+`gateWrites` then extends the permission-broker discipline to the capability
+surface's write side: `fs/write_text_file` and `terminal/create` pass through
+`interactions.gate()` (types `"fs"`/`"terminal"`) before the callback runs —
+same policy hook, same approval inbox, same audit trail as
+`session/request_permission`. Reads stay ungated by default because they are
+the high-frequency path and the broker's audit story is about *effects*.
+Denials throw a `RequestError` to the agent; `gateWrites` with no broker
+denies writes outright (fail safe, matching the no-broker permission
+behavior).
+
 ## Family rules
 
 acpq's position on the cross-adapter contracts in
@@ -200,6 +232,6 @@ states from before the gap should be treated with suspicion.
 
 acpq deliberately does *not* wrap the SDK's whole surface: `q.app` and the
 `ClientConnection` returned by `connect()` are the real SDK objects, so
-anything acpq hasn't modeled (fs/terminal handlers, `session/load`, modes) is
+anything acpq hasn't modeled (modes, forks, documents) is
 reachable underneath — the same "compose, don't enclose" stance as the rest of
 the [agent-query family](https://github.com/johnhenry/agent-query-core).

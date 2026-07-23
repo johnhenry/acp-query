@@ -9,7 +9,31 @@
 // NOT primarily a query cache: ACP is turn/stream-centric. The cache here is a
 // reactive store keyed by session, holding folded turn state.
 
-import { client, type ClientApp, type ClientConnection } from "@agentclientprotocol/sdk";
+import {
+  client,
+  PROTOCOL_VERSION,
+  RequestError,
+  type ClientApp,
+  type ClientConnection,
+} from "@agentclientprotocol/sdk";
+import type {
+  ClientCapabilities,
+  CreateTerminalRequest,
+  CreateTerminalResponse,
+  InitializeResponse,
+  KillTerminalRequest,
+  KillTerminalResponse,
+  ReadTextFileRequest,
+  ReadTextFileResponse,
+  ReleaseTerminalRequest,
+  ReleaseTerminalResponse,
+  TerminalOutputRequest,
+  TerminalOutputResponse,
+  WaitForTerminalExitRequest,
+  WaitForTerminalExitResponse,
+  WriteTextFileRequest,
+  WriteTextFileResponse,
+} from "@agentclientprotocol/sdk";
 import {
   InteractionBroker,
   QueryCache,
@@ -76,6 +100,36 @@ export type AcpKey = { kind: "session"; id: string };
 export const serializeAcpKey = (k: AcpKey): string => JSON.stringify([k.kind, k.id]);
 export const sessionTag = (id: string): string => `session:${id}`;
 
+// ── client capabilities (fs / terminal) ──────────────────────────────────────
+
+type MaybePromise<T> = T | Promise<T>;
+
+/**
+ * User-supplied file-system callbacks. **Nothing is built in**: acpq never
+ * touches the real filesystem — it only wires the callbacks you provide onto
+ * the SDK's `fs/read_text_file` / `fs/write_text_file` handlers and advertises
+ * the matching `clientCapabilities.fs` flags. Omit a callback and the method
+ * is neither registered nor advertised (security default: OFF).
+ */
+export interface AcpFsHandlers {
+  readTextFile?: (params: ReadTextFileRequest) => MaybePromise<ReadTextFileResponse>;
+  writeTextFile?: (params: WriteTextFileRequest) => MaybePromise<WriteTextFileResponse | void>;
+}
+
+/**
+ * User-supplied terminal callbacks. ACP's `terminal` capability is
+ * all-or-nothing ("the Client supports all `terminal/*` methods"), so every
+ * method is required — supply the whole group or none. As with fs, acpq spawns
+ * nothing itself; it only routes the agent's requests to your callbacks.
+ */
+export interface AcpTerminalHandlers {
+  create: (params: CreateTerminalRequest) => MaybePromise<CreateTerminalResponse>;
+  output: (params: TerminalOutputRequest) => MaybePromise<TerminalOutputResponse>;
+  release: (params: ReleaseTerminalRequest) => MaybePromise<ReleaseTerminalResponse | void>;
+  waitForExit: (params: WaitForTerminalExitRequest) => MaybePromise<WaitForTerminalExitResponse>;
+  kill: (params: KillTerminalRequest) => MaybePromise<KillTerminalResponse | void>;
+}
+
 // ── config ───────────────────────────────────────────────────────────────────
 
 /**
@@ -89,7 +143,15 @@ export type AcpDevtoolsEvent =
   | { type: "acp:permission-request"; sessionId: string; options: number }
   | { type: "acp:permission-decision"; sessionId: string; outcome: "selected" | "cancelled"; optionId?: string }
   | { type: "acp:status"; peer: string; state: ConnectivityState }
-  | { type: "acp:cancel"; sessionId: string };
+  | { type: "acp:cancel"; sessionId: string }
+  | { type: "acp:fs"; sessionId: string; op: "readTextFile" | "writeTextFile"; path: string }
+  | {
+      type: "acp:terminal";
+      sessionId: string;
+      op: "create" | "output" | "release" | "waitForExit" | "kill";
+      command?: string;
+      terminalId?: string;
+    };
 
 export interface AcpQueryConfig {
   /** Client identity advertised to agents. */
@@ -112,6 +174,25 @@ export interface AcpQueryConfig {
    * cancel). No-op when absent.
    */
   devtools?: DevtoolsSink<AcpDevtoolsEvent>;
+  /**
+   * File-system callbacks. A handler is registered (and its capability
+   * advertised by `initialize()`) ONLY for the callbacks you supply — with no
+   * `fs` config the agent's fs requests fail as unhandled methods.
+   */
+  fs?: AcpFsHandlers;
+  /**
+   * Terminal callbacks (all five methods, or nothing). Registered and
+   * advertised only when supplied — default OFF.
+   */
+  terminal?: AcpTerminalHandlers;
+  /**
+   * Route WRITE-side capability requests (`fs/write_text_file`,
+   * `terminal/create`) through the `interactions` broker before invoking your
+   * callback: policy first, then the approval inbox on "ask", every outcome
+   * audited (types `"fs"` / `"terminal"`). Reads pass through ungated.
+   * Fail-safe: `gateWrites: true` with NO broker configured denies writes.
+   */
+  gateWrites?: boolean;
 }
 
 export interface ConnectOptions {
@@ -138,11 +219,17 @@ export class AcpQuery {
   private agentName = "agent";
   private connReady = false;
   private devtools?: DevtoolsSink<AcpDevtoolsEvent>;
+  private fs?: AcpFsHandlers;
+  private terminal?: AcpTerminalHandlers;
+  private gateWrites: boolean;
 
   constructor(cfg: AcpQueryConfig = {}) {
     this.interactions = cfg.interactions;
     this.status = cfg.status ?? new StatusStore();
     this.devtools = cfg.devtools;
+    this.fs = cfg.fs;
+    this.terminal = cfg.terminal;
+    this.gateWrites = cfg.gateWrites ?? false;
     this.cache = new QueryCache<AcpKey>({ serializeKey: serializeAcpKey });
     this.app = client({ name: cfg.name ?? "acpq" })
       .onNotification("session/update", (cx) => {
@@ -157,6 +244,125 @@ export class AcpQuery {
         };
         return (await this.decidePermission(params)) as never;
       });
+    this.registerCapabilityHandlers(cfg);
+  }
+
+  /**
+   * Register fs/terminal handlers for exactly the callbacks the caller
+   * supplied. Nothing here reads files or spawns processes — the library only
+   * routes the agent's requests to user code (and gates the write side through
+   * the broker when `gateWrites` is on).
+   */
+  private registerCapabilityHandlers(cfg: AcpQueryConfig): void {
+    const fs = cfg.fs;
+    if (fs?.readTextFile) {
+      const read = fs.readTextFile.bind(fs);
+      this.app.onRequest("fs/read_text_file", async (cx) => {
+        const p = cx.params;
+        this.devtools?.emit({ type: "acp:fs", sessionId: p.sessionId, op: "readTextFile", path: p.path });
+        return await read(p);
+      });
+    }
+    if (fs?.writeTextFile) {
+      const write = fs.writeTextFile.bind(fs);
+      this.app.onRequest("fs/write_text_file", async (cx) => {
+        const p = cx.params;
+        this.devtools?.emit({ type: "acp:fs", sessionId: p.sessionId, op: "writeTextFile", path: p.path });
+        await this.gateWrite("fs", "fs/write_text_file", p);
+        return (await write(p)) ?? {};
+      });
+    }
+    const term = cfg.terminal;
+    if (term) {
+      this.app
+        .onRequest("terminal/create", async (cx) => {
+          const p = cx.params;
+          this.devtools?.emit({ type: "acp:terminal", sessionId: p.sessionId, op: "create", command: p.command });
+          await this.gateWrite("terminal", "terminal/create", p);
+          return await term.create(p);
+        })
+        .onRequest("terminal/output", async (cx) => {
+          const p = cx.params;
+          this.devtools?.emit({ type: "acp:terminal", sessionId: p.sessionId, op: "output", terminalId: p.terminalId });
+          return await term.output(p);
+        })
+        .onRequest("terminal/release", async (cx) => {
+          const p = cx.params;
+          this.devtools?.emit({ type: "acp:terminal", sessionId: p.sessionId, op: "release", terminalId: p.terminalId });
+          return (await term.release(p)) ?? {};
+        })
+        .onRequest("terminal/wait_for_exit", async (cx) => {
+          const p = cx.params;
+          this.devtools?.emit({
+            type: "acp:terminal",
+            sessionId: p.sessionId,
+            op: "waitForExit",
+            terminalId: p.terminalId,
+          });
+          return await term.waitForExit(p);
+        })
+        .onRequest("terminal/kill", async (cx) => {
+          const p = cx.params;
+          this.devtools?.emit({ type: "acp:terminal", sessionId: p.sessionId, op: "kill", terminalId: p.terminalId });
+          return (await term.kill(p)) ?? {};
+        });
+    }
+  }
+
+  /**
+   * The broker gate on WRITE-side capability requests. No-op unless
+   * `gateWrites` is on; with it on and no broker configured, writes are
+   * denied (fail safe). A denied gate throws — the SDK maps it to a JSON-RPC
+   * error on the agent's request.
+   */
+  private async gateWrite(type: "fs" | "terminal", method: string, params: unknown): Promise<void> {
+    if (!this.gateWrites) return;
+    if (!this.interactions) {
+      throw new RequestError(
+        -32000,
+        `acpq: ${method} denied — gateWrites is on but no interactions broker is configured`,
+      );
+    }
+    const { decision } = await this.interactions.gate(type, this.agentName, { method, params });
+    if (decision.action !== "approve" || decision.cancelled) {
+      throw new RequestError(
+        -32000,
+        `acpq: ${method} denied by broker${decision.reason ? ` (${decision.reason})` : ""}`,
+      );
+    }
+  }
+
+  /**
+   * The `ClientCapabilities` this instance advertises — derived purely from
+   * which callbacks were configured: `fs.readTextFile` / `fs.writeTextFile`
+   * per supplied fs callback, `terminal: true` only with the full terminal
+   * group. No config ⇒ `{}`.
+   */
+  clientCapabilities(): ClientCapabilities {
+    const caps: ClientCapabilities = {};
+    if (this.fs?.readTextFile || this.fs?.writeTextFile) {
+      caps.fs = {
+        readTextFile: Boolean(this.fs.readTextFile),
+        writeTextFile: Boolean(this.fs.writeTextFile),
+      };
+    }
+    if (this.terminal) caps.terminal = true;
+    return caps;
+  }
+
+  /**
+   * Send `initialize`, advertising `clientCapabilities()`. Optional — the
+   * mock agent doesn't require it — but real agents gate fs/terminal requests
+   * on the capabilities advertised here, so call it before `newSession()`
+   * when capabilities are configured.
+   */
+  async initialize(): Promise<InitializeResponse> {
+    const res = await this.agent.request("initialize", {
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: this.clientCapabilities(),
+    });
+    this.markReady();
+    return res;
   }
 
   /**

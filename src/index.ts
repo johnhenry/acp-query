@@ -3,7 +3,9 @@
 export { AcpQuery, serializeAcpKey, sessionTag } from "./client.js";
 export type {
   AcpDevtoolsEvent,
+  AcpFsHandlers,
   AcpKey,
+  AcpTerminalHandlers,
   AcpQueryConfig,
   ConnectOptions,
   PermissionDecision,

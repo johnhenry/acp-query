@@ -8,6 +8,7 @@ The complete public surface of `@johnhenry/acpq`. Conceptual background lives in
   - [`newSession` / `prompt` / `cancel`](#newsession--prompt--cancel)
   - [`session` / `subscribe`](#session--subscribe-reactive-access)
   - [`status` — peer connectivity](#status--peer-connectivity)
+  - [Client capabilities: `fs` / `terminal` / `gateWrites`](#client-capabilities-fs--terminal--gatewrites)
   - [Devtools events](#devtools-events)
 - [`SessionState` & `ToolCallState`](#sessionstate--toolcallstate)
 - [Permissions: `PermissionDecision`, `PermissionOption`](#permissions)
@@ -38,7 +39,8 @@ const q = new AcpQuery({
 ```
 
 `AcpQueryConfig`: `{ name?: string; interactions?: InteractionBroker<PermissionDecision>;
-status?: StatusStore; devtools?: DevtoolsSink<AcpDevtoolsEvent> }`.
+status?: StatusStore; devtools?: DevtoolsSink<AcpDevtoolsEvent>;
+fs?: AcpFsHandlers; terminal?: AcpTerminalHandlers; gateWrites?: boolean }`.
 
 Public readonly fields: `q.cache` (the `QueryCache<AcpKey>`), `q.interactions`,
 `q.status` (the `StatusStore` — see below), `q.app` (the underlying SDK
@@ -134,6 +136,56 @@ permissions — so acpq never retries it, honoring the core's `withRetry`
 contract (retries only under an explicit `idempotent: true` assertion).
 Recovery is the app's call: re-prompt or start a fresh session.
 
+### Client capabilities: `fs` / `terminal` / `gateWrites`
+
+ACP agents can ask the *client* to read/write files and run terminals. acpq's
+security default is **OFF**: no fs or terminal handler exists unless you supply
+the callback in config, and nothing built-in touches a real filesystem or
+spawns processes — the library only wires **your** callbacks onto the SDK's
+handlers and advertises the matching capabilities.
+
+```ts
+import { AcpQuery, type AcpFsHandlers, type AcpTerminalHandlers } from "@johnhenry/acpq";
+
+const q = new AcpQuery({
+  fs: {                        // register either, both, or neither
+    readTextFile: async ({ sessionId, path, line, limit }) => ({ content: "…" }),
+    writeTextFile: async ({ sessionId, path, content }) => {},
+  },
+  terminal: {                  // all five, or nothing (the capability is all-or-nothing)
+    create: async ({ sessionId, command, args, env, cwd }) => ({ terminalId: "t1" }),
+    output: async ({ terminalId }) => ({ output: "…", truncated: false }),
+    waitForExit: async ({ terminalId }) => ({ exitCode: 0 }),
+    kill: async ({ terminalId }) => {},
+    release: async ({ terminalId }) => {},
+  },
+  interactions: broker,
+  gateWrites: true,            // gate fs writes + terminal creates through the broker
+});
+
+q.clientCapabilities();  // {fs: {readTextFile: true, writeTextFile: true}, terminal: true}
+await q.initialize();    // sends `initialize` advertising exactly those capabilities
+```
+
+- **Method shapes are the SDK's own** (`ReadTextFileRequest` →
+  `ReadTextFileResponse`, etc.) — params arrive schema-validated; whatever your
+  callback returns goes back on the wire. Callbacks may be sync or async;
+  `writeTextFile` / `release` / `kill` may return `void` (acpq answers `{}`).
+- **`clientCapabilities()`** derives the `ClientCapabilities` object from
+  config: per-callback `fs` flags, `terminal: true` only with the full group.
+  **`initialize()`** sends it (with `PROTOCOL_VERSION`); real agents gate their
+  fs/terminal usage on this, so call it before `newSession()`.
+- **`gateWrites: true`** routes the write side — `fs/write_text_file` and
+  `terminal/create` — through the `interactions` broker before your callback
+  runs: policy first (types `"fs"` / `"terminal"`, payload
+  `{method, params}`), approval inbox on `"ask"`, every outcome audited.
+  Reads (`fs/read_text_file`, `terminal/output`, …) pass ungated. Denied
+  gates throw a `RequestError` back to the agent and your callback never
+  runs. Fail-safe: `gateWrites` with **no broker** denies all gated writes.
+- Every invocation emits an `acp:fs` / `acp:terminal` devtools event (below).
+
+See [`examples/08-client-capabilities.ts`](../examples/08-client-capabilities.ts).
+
 ### Devtools events
 
 Pass any `DevtoolsSink` (canonically a `DevtoolsHub`) as
@@ -149,6 +201,8 @@ sink configured, emission is a no-op. The vocabulary (`AcpDevtoolsEvent`):
 | `acp:permission-decision` | `{sessionId, outcome: "selected" \| "cancelled", optionId?}` | the wire answer, broker-mediated or not |
 | `acp:status` | `{peer, state}` | every connectivity transition |
 | `acp:cancel` | `{sessionId}` | `cancel()` sent `session/cancel` |
+| `acp:fs` | `{sessionId, op: "readTextFile" \| "writeTextFile", path}` | each fs handler invocation |
+| `acp:terminal` | `{sessionId, op, command?, terminalId?}` | each terminal handler invocation (`op` ∈ create/output/release/waitForExit/kill) |
 
 ```ts
 import { AcpQuery, DevtoolsHub, type AcpDevtoolsEvent } from "@johnhenry/acpq";
@@ -281,3 +335,9 @@ q.connect(mockAcpAgent({
 `ctx.update(update, sessionId?)` accepts a sessionId override to emit for a
 different session than the current turn's. `ctx.text` is the concatenated
 prompt text; `ctx.sessionId` the turn's session.
+
+`ctx.call(method, params)` calls any client-side method
+(`fs/read_text_file`, `terminal/create`, …) — the escape hatch for exercising
+client capabilities from a scripted turn. `MockAcpAgentOptions.onInitialize`
+observes the client's `initialize` request (e.g. to assert the advertised
+`clientCapabilities`); the mock always answers `{protocolVersion: 1}`.

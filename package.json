@@ -39,7 +39,8 @@
     "example:04": "tsx examples/04-policy-rules.ts",
     "example:05": "tsx examples/05-multi-session.ts",
     "example:06": "tsx examples/06-cancel.ts",
-    "example:07": "tsx examples/07-devtools-timeline.ts"
+    "example:07": "tsx examples/07-devtools-timeline.ts",
+    "example:08": "tsx examples/08-client-capabilities.ts"
   },
   "dependencies": {
     "@johnhenry/agent-query-core": "0.1.0-rc.3"

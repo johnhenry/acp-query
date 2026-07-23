@@ -24,6 +24,11 @@ export interface MockPromptContext {
   askPermission: (options?: Array<{ optionId: string; name: string; kind: string }>) => Promise<
     { outcome: "selected"; optionId: string } | { outcome: "cancelled" }
   >;
+  /**
+   * Call any client-side method (fs/read_text_file, terminal/create, …) —
+   * the escape hatch for exercising client capabilities from a scripted turn.
+   */
+  call: (method: string, params: Record<string, unknown>) => Promise<unknown>;
   /** True once the client has sent session/cancel for this session's turn. */
   cancelled: () => boolean;
   /** Resolves when the client sends session/cancel (never, if it doesn't). */
@@ -38,6 +43,11 @@ export interface MockAcpAgentOptions {
    * cancelled the turn, honoring the ACP prompt-turn contract).
    */
   onPrompt?: (ctx: MockPromptContext) => Promise<string | void>;
+  /**
+   * Observe the client's `initialize` request (e.g. assert the advertised
+   * clientCapabilities). The response is always `{protocolVersion: 1}`.
+   */
+  onInitialize?: (params: Record<string, unknown>) => void;
 }
 
 export function mockAcpAgent(opts: MockAcpAgentOptions = {}): AgentApp {
@@ -45,7 +55,10 @@ export function mockAcpAgent(opts: MockAcpAgentOptions = {}): AgentApp {
   const cancelledSessions = new Set<string>();
   const cancelWaiters = new Map<string, Array<() => void>>();
   return agent({ name: opts.name ?? "mock-acp-agent" })
-    .onRequest("initialize", () => ({ protocolVersion: 1 }) as never)
+    .onRequest("initialize", (cx) => {
+      opts.onInitialize?.(cx.params as Record<string, unknown>);
+      return { protocolVersion: 1 } as never;
+    })
     .onRequest("session/new", () => ({ sessionId: `sess-${++seq}` }) as never)
     .onNotification("session/cancel", (cx) => {
       const { sessionId } = cx.params as { sessionId: string };
@@ -81,6 +94,7 @@ export function mockAcpAgent(opts: MockAcpAgentOptions = {}): AgentApp {
           } as never)) as { outcome: { outcome: "selected"; optionId: string } | { outcome: "cancelled" } };
           return res.outcome;
         },
+        call: (method, callParams) => cx.client.request(method, callParams as never),
         cancelled: () => cancelledSessions.has(params.sessionId),
         whenCancelled: new Promise<void>((resolve) => {
           if (cancelledSessions.has(params.sessionId)) return resolve();
