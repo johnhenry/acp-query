@@ -300,6 +300,17 @@ states from before the gap should be treated with suspicion.
 | The cancel contract (auto-resolving pending permissions) | **acpq** |
 | Peer connectivity (`StatusStore`) + devtools event stream | **acpq** (+ agent-query-core) |
 | In-process mock agent with turn helpers (`say`, `toolCall`, `askPermission`, cancel awareness) | **acpq**/testing |
+| React hooks (`useSession` / `useToolCalls` / `usePermissions`) over the same snapshots | **acpq**/react (+ core's react bindings) |
+
+The react subpath is the payoff of the store's two invariants: because
+snapshots are replaced (never mutated) and every fold is a synchronous
+read-modify-write, `getSnapshot`/`subscribe` plug straight into
+`useSyncExternalStore` — the hooks are ~30 lines of binding, not a state
+layer of their own. `usePermissions` filters the broker queue to type
+`"permission"` because that queue is deliberately shared: `gateWrites` puts
+fs/terminal interactions on the same broker, and an approval inbox for
+*agent-requested permissions* is a different UI surface than one for
+*capability writes*.
 
 acpq deliberately does *not* wrap the SDK's whole surface: `q.app` and the
 `ClientConnection` returned by `connect()` are the real SDK objects, so

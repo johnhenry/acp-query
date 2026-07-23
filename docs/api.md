@@ -16,6 +16,7 @@ The complete public surface of `@johnhenry/acpq`. Conceptual background lives in
 - [Permissions: `PermissionDecision`, `PermissionOption`](#permissions)
 - [Cache keys: `AcpKey`, `serializeAcpKey`, `sessionTag`](#cache-keys)
 - [Re-exports from agent-query-core](#re-exports-from-agent-query-core)
+- [`@johnhenry/acpq/react` — hooks](#johnhenryacpqreact--hooks)
 - [`@johnhenry/acpq/testing` — `mockAcpAgent`](#johnhenryacpqtesting--mockacpagent)
 
 ---
@@ -414,6 +415,50 @@ For convenience, the shared engine's primitives are re-exported so most apps
 need a single import: `DevtoolsHub`, `InteractionBroker`, `QueryCache`,
 `StatusStore` (values) and `AuditEntry`, `BaseDecision`, `ConnectivityState`,
 `DevtoolsSink`, `Interaction`, `PeerStatus`, `PolicyVerdict` (types).
+
+## `@johnhenry/acpq/react` — hooks
+
+Thin hooks over the store, built on agent-query-core's react bindings
+(`useSyncExternalStore` underneath): no resubscribe churn on inline keys, no
+re-render on structurally-equal rewrites, SSR-deterministic first paint.
+React is an **optional peer dependency** — only this subpath touches it.
+
+```tsx
+import { useSession, useToolCalls, usePermissions } from "@johnhenry/acpq/react";
+
+function Turn({ q, sid }: { q: AcpQuery; sid: string }) {
+  const state = useSession(q, sid);          // SessionState | undefined, per fold
+  const tools = useToolCalls(q, sid);        // ToolCallState[] (stable identity per fold)
+  const { permissions, resolve } = usePermissions(q); // the approval inbox
+
+  return (
+    <>
+      <pre>{state?.messageText}</pre>
+      <ul>{tools.map((t) => <li key={t.toolCallId}>{t.title}: {t.status}</li>)}</ul>
+      {permissions.map((p) => (
+        <button key={p.id} onClick={() => resolve(p.id, { action: "approve" })}>allow</button>
+      ))}
+    </>
+  );
+}
+```
+
+- **`useSession(q, sessionId)`** — the folded `SessionState`, reactively;
+  `undefined` until the store sees the session (the subscription is already
+  live, so a later `newSession()`/implicit fold renders immediately).
+- **`useToolCalls(q, sessionId)`** — `Object.values(state.toolCalls)` in
+  insertion order, memoized per snapshot so the array is dependency-list safe.
+- **`usePermissions(q)`** — `{permissions, resolve}`: the broker's pending
+  queue filtered to type `"permission"` (fs/terminal `gateWrites`
+  interactions are excluded — read `q.interactions` directly for those), with
+  `resolve` typed over `PermissionDecision`. No broker ⇒ empty queue, no-op
+  resolver.
+- The core hooks are re-exported for one-import apps: `useCacheEntry` (e.g.
+  observing a `{kind: "session-list"}` entry), `useInteractions`,
+  `useAuditLog(q.interactions)`, `usePeerStatus(q.status)`, `useVersioned`,
+  and the `<AgentQueryDevtools>` panel (feed it a `DevtoolsHub`).
+
+Tested with real renders in [`test/react.dom.test.tsx`](../test/react.dom.test.tsx).
 
 ## `@johnhenry/acpq/testing` — `mockAcpAgent`
 
