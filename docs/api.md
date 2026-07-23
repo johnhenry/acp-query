@@ -6,6 +6,7 @@ The complete public surface of `@johnhenry/acpq`. Conceptual background lives in
 - [`AcpQuery`](#acpquery)
   - [Construction](#construction) · [`connect` / `close`](#connect--close)
   - [`newSession` / `prompt` / `cancel`](#newsession--prompt--cancel)
+  - [`listSessions` / `loadSession` / `commands`](#listsessions--loadsession--commands-cacheable-reads)
   - [`session` / `subscribe`](#session--subscribe-reactive-access)
   - [`status` — peer connectivity](#status--peer-connectivity)
   - [Client capabilities: `fs` / `terminal` / `gateWrites`](#client-capabilities-fs--terminal--gatewrites)
@@ -87,6 +88,43 @@ await q.cancel(sid); // session/cancel
 in-flight `session/request_permission` receives `{outcome: "cancelled"}`
 (audited as `denied`, reason `"session/cancel"`) instead of hanging forever.
 The turn then finishes and `prompt()` resolves with stop reason `"cancelled"`.
+
+### `listSessions` / `loadSession` / `commands` (cacheable reads)
+
+ACP's few *addressable reads* get the classic query-cache treatment:
+
+```ts
+const sessions = await q.listSessions();            // session/list — cached
+await q.listSessions({ cwd: "/workspace" });        // separate entry per cwd filter
+await q.listSessions({ force: true });              // bypass the cache
+
+const state = await q.loadSession(sid, "/workspace"); // session/load — replay into a fresh fold
+
+q.commands(sid);                  // a session's slash commands, as their own cache entry
+q.subscribeCommands(sid, fn);     // notify only when the commands change
+```
+
+- **`listSessions(opts?)`** returns `SessionInfo[]` (the SDK's type),
+  following `nextCursor` pagination to the end. Within
+  `AcpQueryConfig.listStaleTime` (default 30 000 ms) of the last fetch, the
+  cache answers without touching the agent; concurrent calls share one
+  in-flight request. `newSession()` invalidates every list entry (they carry
+  the exported `sessionsTag`); errors are recorded on the entry
+  (`status: "error"`) and rethrown. Entries are keyed
+  `{kind: "session-list", cwd?}` and observable via `q.cache`.
+- **`loadSession(sessionId, cwd = "/")`** implements the family's
+  reconcile-read rule: the agent replays the session's history as ordinary
+  `session/update` notifications, so acpq **discards any pre-existing folded
+  state first** — the replay is the complete truth, and folding onto leftovers
+  would double-count. Subscribers stay attached and watch the replay live.
+  Resolves with the replayed `SessionState`; `currentMode` is seeded from the
+  response's mode state when reported.
+- **`commands(sessionId)` / `subscribeCommands`** — `available_commands_update`
+  folds also maintain a `{kind: "commands", id}` cache entry, so a command
+  palette re-renders only when the commands change, not on every message
+  chunk. (Still mirrored on `SessionState.availableCommands`.)
+
+See [`examples/10-session-list-load.ts`](../examples/10-session-list-load.ts).
 
 ### `session` / `subscribe` (reactive access)
 
@@ -315,13 +353,18 @@ Decision → wire mapping, in precedence order:
 For apps composing on `q.cache` directly (devtools, persistence, invalidation):
 
 ```ts
-import { type AcpKey, serializeAcpKey, sessionTag } from "@johnhenry/acpq";
+import { type AcpKey, serializeAcpKey, sessionTag, sessionsTag } from "@johnhenry/acpq";
 
 const key: AcpKey = { kind: "session", id: sid };
 serializeAcpKey(key);      // '["session","sess-1"]' — the cache's canonical string key
-sessionTag(sid);           // "session:sess-1" — the tag session entries are written under
+sessionTag(sid);           // "session:sess-1" — the tag session (+ commands) entries carry
+sessionsTag;               // "acp:sessions" — the tag on cached session/list entries
 q.cache.getSnapshot(key);  // the full CacheEntry (version, tags, …), not just .data
 ```
+
+`AcpKey` is a union: `{kind: "session", id}` (folded state),
+`{kind: "session-list", cwd?}` (cached lists), `{kind: "commands", id}`
+(slash-command entries).
 
 ## Re-exports from agent-query-core
 
@@ -359,6 +402,12 @@ q.connect(mockAcpAgent({
 `ctx.update(update, sessionId?)` accepts a sessionId override to emit for a
 different session than the current turn's. `ctx.text` is the concatenated
 prompt text; `ctx.sessionId` the turn's session.
+
+`MockAcpAgentOptions.listSessions` serves `session/list` (return one page per
+call; `nextCursor` drives the client's pagination loop) and
+`MockAcpAgentOptions.onLoad` serves `session/load` (replay history through its
+`say`/`toolCall`/`update` helpers, optionally return `{currentModeId}`) — both
+registered only when supplied.
 
 `ctx.call(method, params)` calls any client-side method
 (`fs/read_text_file`, `terminal/create`, …) — the escape hatch for exercising

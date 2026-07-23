@@ -48,13 +48,60 @@ export interface MockAcpAgentOptions {
    * clientCapabilities). The response is always `{protocolVersion: 1}`.
    */
   onInitialize?: (params: Record<string, unknown>) => void;
+  /**
+   * Serve `session/list`. Return one page per call — `nextCursor` drives the
+   * client's pagination loop. Registered only when supplied.
+   */
+  listSessions?: (params: { cwd?: string | null; cursor?: string | null }) => {
+    sessions: Array<{ sessionId: string; cwd: string; title?: string | null }>;
+    nextCursor?: string | null;
+  };
+  /**
+   * Serve `session/load`: replay the session's history through the provided
+   * helpers (they emit `session/update` notifications for the loading
+   * session), then optionally return mode state. Registered only when supplied.
+   */
+  onLoad?: (ctx: {
+    sessionId: string;
+    cwd: string;
+    say: (text: string) => Promise<void>;
+    toolCall: (id: string, title: string, status?: string) => Promise<void>;
+    update: (update: Record<string, unknown>) => Promise<void>;
+  }) => Promise<{ currentModeId?: string } | void> | { currentModeId?: string } | void;
 }
 
 export function mockAcpAgent(opts: MockAcpAgentOptions = {}): AgentApp {
   let seq = 0;
   const cancelledSessions = new Set<string>();
   const cancelWaiters = new Map<string, Array<() => void>>();
-  return agent({ name: opts.name ?? "mock-acp-agent" })
+  const app = agent({ name: opts.name ?? "mock-acp-agent" });
+  if (opts.listSessions) {
+    const list = opts.listSessions;
+    app.onRequest("session/list", (cx) => {
+      const p = cx.params as { cwd?: string | null; cursor?: string | null };
+      return list(p) as never;
+    });
+  }
+  if (opts.onLoad) {
+    const onLoad = opts.onLoad;
+    app.onRequest("session/load", async (cx) => {
+      const p = cx.params as { sessionId: string; cwd: string };
+      const notify = (update: Record<string, unknown>) =>
+        cx.client.notify("session/update", { sessionId: p.sessionId, update } as never);
+      const res = await onLoad({
+        sessionId: p.sessionId,
+        cwd: p.cwd,
+        say: (t) => notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } }),
+        toolCall: (id, title, status = "completed") =>
+          notify({ sessionUpdate: "tool_call", toolCallId: id, title, status, kind: "other" }),
+        update: (update) => notify(update),
+      });
+      return (res?.currentModeId
+        ? { modes: { currentModeId: res.currentModeId, availableModes: [{ id: res.currentModeId, name: res.currentModeId }] } }
+        : {}) as never;
+    });
+  }
+  return app
     .onRequest("initialize", (cx) => {
       opts.onInitialize?.(cx.params as Record<string, unknown>);
       return { protocolVersion: 1 } as never;

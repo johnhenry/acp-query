@@ -67,6 +67,34 @@ implicitly — agents may stream for sessions established elsewhere (e.g.
 `session/load` by another client of the same agent). Implicit states are
 indistinguishable from `newSession()` ones.
 
+## The thin cacheable-read surface
+
+"Not primarily a query cache" has one deliberate exception: ACP does expose a
+few *addressable reads*, and for exactly those acpq behaves like its
+Apollo-shaped siblings. `session/list` is a classic cacheable read — keyed
+(`{kind: "session-list", cwd?}`), staleness-bounded (`listStaleTime`),
+request-de-duped, and tag-invalidated (`sessionsTag`) when `newSession()`
+changes membership. Pagination is followed to the end inside one read because
+the cursor is a transport detail, not part of the answer.
+
+`session/load` is the interesting hybrid: it *looks* like a read but arrives
+as a stream — the agent replays history through ordinary `session/update`
+notifications. The family's reconcile rule resolves the tension: **a load IS
+the reconcile read.** Since the replay is by definition the complete history,
+any pre-existing folded state (gappy after a disconnect, stale from an earlier
+attach) is discarded before the replay folds in — reconciling by replacement,
+which is the only sound option for order-dependent deltas. This also softens
+the "ACP has no replay" position under Family rules below: where an agent
+supports `session/load`, there *is* a full read to reconcile against, and
+`loadSession()` is how acpq performs it. Where it doesn't, the gappy-state
+stance stands unchanged.
+
+`available_commands_update` gets a small dual treatment: it folds into
+`SessionState.availableCommands` like any update, *and* maintains its own
+cache entry (`{kind: "commands", id}`) — because its consumer (a command
+palette) has a different render cadence than a transcript view, and giving it
+its own key means it only re-renders when commands actually change.
+
 ## The permission mapping
 
 `session/request_permission` is ACP's most distinctive primitive: the agent

@@ -19,6 +19,8 @@ import {
 } from "@agentclientprotocol/sdk";
 import type {
   ClientCapabilities,
+  ListSessionsResponse,
+  SessionInfo,
   CreateTerminalRequest,
   CreateTerminalResponse,
   InitializeResponse,
@@ -97,9 +99,24 @@ export interface SessionState {
   updates: unknown[];
 }
 
-export type AcpKey = { kind: "session"; id: string };
-export const serializeAcpKey = (k: AcpKey): string => JSON.stringify([k.kind, k.id]);
+export type AcpKey =
+  | { kind: "session"; id: string }
+  /** The cached session/list read (one entry per cwd filter; "" = unfiltered). */
+  | { kind: "session-list"; cwd?: string }
+  /** A session's available slash commands, separately keyed from its fold. */
+  | { kind: "commands"; id: string };
+export const serializeAcpKey = (k: AcpKey): string => {
+  switch (k.kind) {
+    case "session":
+    case "commands":
+      return JSON.stringify([k.kind, k.id]);
+    case "session-list":
+      return JSON.stringify([k.kind, k.cwd ?? ""]);
+  }
+};
 export const sessionTag = (id: string): string => `session:${id}`;
+/** Tag on every cached session/list entry — invalidated when membership changes. */
+export const sessionsTag = "acp:sessions";
 
 // ── client capabilities (fs / terminal) ──────────────────────────────────────
 
@@ -203,6 +220,11 @@ export interface AcpQueryConfig {
    * Fail-safe: `gateWrites: true` with NO broker configured denies writes.
    */
   gateWrites?: boolean;
+  /**
+   * Staleness window (ms) for cached `listSessions()` reads. Within it,
+   * repeat calls return the cache without touching the agent. Default 30_000.
+   */
+  listStaleTime?: number;
 }
 
 export interface ConnectOptions {
@@ -232,8 +254,10 @@ export class AcpQuery {
   private fs?: AcpFsHandlers;
   private terminal?: AcpTerminalHandlers;
   private gateWrites: boolean;
+  private listStaleTime: number;
 
   constructor(cfg: AcpQueryConfig = {}) {
+    this.listStaleTime = cfg.listStaleTime ?? 30_000;
     this.interactions = cfg.interactions;
     this.status = cfg.status ?? new StatusStore();
     this.devtools = cfg.devtools;
@@ -445,7 +469,79 @@ export class AcpQuery {
     };
     this.markReady();
     this.write(this.ensureState(res.sessionId));
+    // Membership changed: every cached session/list read is now suspect.
+    this.cache.invalidateTags([sessionsTag]);
     return res.sessionId;
+  }
+
+  /**
+   * Cached `session/list`. Pagination is followed to the end (the cursor is a
+   * transport detail, not part of the read). Within `listStaleTime` of the
+   * last fetch the cache answers without touching the agent; concurrent calls
+   * share one in-flight request. `newSession()` invalidates the cache (tag
+   * `sessionsTag`); `{force: true}` bypasses it.
+   *
+   * The entry is keyed per `cwd` filter (`{kind: "session-list", cwd}`) and
+   * observable via `q.cache` like any other entry.
+   */
+  async listSessions(opts: { cwd?: string; force?: boolean } = {}): Promise<SessionInfo[]> {
+    const key: AcpKey = { kind: "session-list", ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}) };
+    const entry = this.cache.getSnapshot(key);
+    if (!opts.force && entry?.data && !this.cache.isStale(key)) {
+      return entry.data as SessionInfo[];
+    }
+    const inflight = this.cache.inflight(key);
+    if (inflight) return inflight as Promise<SessionInfo[]>;
+    const fetch = (async () => {
+      try {
+        const sessions: SessionInfo[] = [];
+        let cursor: string | null | undefined;
+        do {
+          const res: ListSessionsResponse = await this.agent.request("session/list", {
+            ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+            ...(cursor ? { cursor } : {}),
+          });
+          sessions.push(...res.sessions);
+          cursor = res.nextCursor;
+        } while (cursor);
+        this.markReady();
+        this.cache.write(key, sessions, { tags: [sessionsTag], staleTime: this.listStaleTime });
+        return sessions;
+      } catch (err) {
+        this.cache.setError(key, err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      } finally {
+        this.cache.setInflight(key, undefined);
+      }
+    })();
+    this.cache.setFetching(key);
+    this.cache.setInflight(key, fetch);
+    return fetch;
+  }
+
+  /**
+   * `session/load` — resume an existing session, replaying its history.
+   *
+   * Family rule: **a load IS the reconcile read.** The agent replays the
+   * session's full history as ordinary `session/update` notifications, so any
+   * pre-existing folded state (gappy after a reconnect, or stale from an
+   * earlier attach) is discarded first — the replayed fold is the complete
+   * truth, and folding on top of leftovers would double-count it. Subscribers
+   * survive: they see the reset, then the replay stream, live.
+   *
+   * Resolves with the replayed `SessionState` (also observable mid-replay via
+   * `session()`/`subscribe()`). `currentMode` is seeded from the response's
+   * mode state when the agent reports one.
+   */
+  async loadSession(sessionId: string, cwd = "/"): Promise<SessionState> {
+    this.write({ sessionId, messageText: "", toolCalls: {}, updates: [] });
+    const res = await this.agent.request("session/load", { sessionId, cwd, mcpServers: [] });
+    this.markReady();
+    const state = this.ensureState(sessionId);
+    const modeId = res?.modes?.currentModeId;
+    if (typeof modeId === "string" && modeId) state.currentMode = modeId;
+    this.write(state);
+    return this.session(sessionId)!;
   }
 
   /**
@@ -513,6 +609,20 @@ export class AcpQuery {
   }
   subscribe(sessionId: string, fn: () => void): () => void {
     return this.cache.subscribe({ kind: "session", id: sessionId }, fn);
+  }
+
+  /**
+   * A session's available slash commands as their own cache entry
+   * (`{kind: "commands", id}`), maintained by `available_commands_update`
+   * folds — so a command palette can subscribe to just the commands without
+   * re-rendering on every message chunk. Also mirrored on
+   * `SessionState.availableCommands`.
+   */
+  commands(sessionId: string): unknown[] | undefined {
+    return this.cache.getSnapshot({ kind: "commands", id: sessionId })?.data as unknown[] | undefined;
+  }
+  subscribeCommands(sessionId: string, fn: () => void): () => void {
+    return this.cache.subscribe({ kind: "commands", id: sessionId }, fn);
   }
 
   // ── internals ─────────────────────────────────────────────────────────────
@@ -586,9 +696,16 @@ export class AcpQuery {
       case "plan":
         state.plan = update.entries ?? update;
         break;
-      case "available_commands_update":
+      case "available_commands_update": {
         state.availableCommands = update.availableCommands ?? update;
+        // Separately-keyed entry: command palettes subscribe to this alone.
+        const list = Array.isArray(update.availableCommands) ? update.availableCommands : [];
+        this.cache.write({ kind: "commands", id: sessionId }, list, {
+          tags: [sessionTag(sessionId)],
+          staleTime: Number.POSITIVE_INFINITY, // stream-maintained, like the session fold
+        });
         break;
+      }
       case "current_mode_update":
         state.currentMode = String(update.currentModeId ?? "");
         break;

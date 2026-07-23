@@ -1,6 +1,6 @@
 // @johnhenry/acpq — reactive session/turn store + permission broker for ACP.
 
-export { AcpQuery, serializeAcpKey, sessionTag } from "./client.js";
+export { AcpQuery, serializeAcpKey, sessionTag, sessionsTag } from "./client.js";
 export type {
   AcpDevtoolsEvent,
   AcpFsHandlers,
