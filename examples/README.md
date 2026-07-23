@@ -15,6 +15,7 @@ protocol routing. Run any with `npx tsx examples/<file>` (or `npm run example:NN
 | 06 | [`06-cancel.ts`](./06-cancel.ts) | cancel mid-turn: pending permission resolved cancelled, stopReason "cancelled" | `npm run example:06` |
 | 07 | [`07-devtools-timeline.ts`](./07-devtools-timeline.ts) | DevtoolsHub events rendered as an indented turn timeline | `npm run example:07` |
 | 08 | [`08-client-capabilities.ts`](./08-client-capabilities.ts) | fs + terminal callbacks, capability advertising, gated writes | `npm run example:08` |
+| 09 | [`09-wire-timeline.ts`](./09-wire-timeline.ts) | instrumentAcpStream: wire messages + semantic events, one interleaved timeline | `npm run example:09` |
 
 To point any of these at a **real** agent, replace the `mockAcpAgent(...)` argument
 with a transport stream (`ndJsonStream` over a spawned agent's stdio, a WebSocket, …)

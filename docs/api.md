@@ -196,7 +196,7 @@ sink configured, emission is a no-op. The vocabulary (`AcpDevtoolsEvent`):
 |---|---|---|
 | `acp:turn-start` | `{sessionId}` | `prompt()` called |
 | `acp:turn-end` | `{sessionId, stopReason}` | `prompt()` resolved |
-| `acp:update` | `{sessionId, kind}` | per folded `session/update` (`kind` = the `sessionUpdate` discriminator) |
+| `acp:update` | `{sessionId, kind, toolCallId?, status?, title?}` | per folded `session/update` (`kind` = the `sessionUpdate` discriminator; the tool-call fields appear on `tool_call`/`tool_call_update` folds) |
 | `acp:permission-request` | `{sessionId, options: count}` | `session/request_permission` received |
 | `acp:permission-decision` | `{sessionId, outcome: "selected" \| "cancelled", optionId?}` | the wire answer, broker-mediated or not |
 | `acp:status` | `{peer, state}` | every connectivity transition |
@@ -215,6 +215,30 @@ hub.subscribe(() => console.log(hub.events().at(-1)));
 
 See [`examples/07-devtools-timeline.ts`](../examples/07-devtools-timeline.ts)
 for a full turn rendered as an indented timeline.
+
+#### `instrumentAcpStream(stream, sink)` — the wire tap
+
+For **stream transports** (ndJsonStream over stdio, WebSocket, …), wrap the
+transport before `connect()` and every JSON-RPC message — requests, responses,
+notifications, both directions — is emitted as a compact
+`{type: "acp:wire", dir: "in" | "out", method?, id?}` event alongside the
+semantic vocabulary on the same sink. `method` is present on
+requests/notifications, `id` on requests/responses (a method-less event is a
+response; an id-less one a notification). The tap is transparent — messages
+pass through unchanged.
+
+```ts
+import { AcpQuery, DevtoolsHub, instrumentAcpStream } from "@johnhenry/acpq";
+import { ndJsonStream } from "@agentclientprotocol/sdk";
+
+const hub = new DevtoolsHub<AcpDevtoolsEvent>();
+const q = new AcpQuery({ devtools: hub });
+q.connect(instrumentAcpStream(ndJsonStream(stdin, stdout), hub));
+```
+
+In-process `connect(agentApp)` has no stream to tap; the semantic events still
+cover it. See [`examples/09-wire-timeline.ts`](../examples/09-wire-timeline.ts)
+for both strata rendered interleaved.
 
 ## `SessionState` & `ToolCallState`
 

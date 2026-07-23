@@ -15,6 +15,7 @@ import {
   RequestError,
   type ClientApp,
   type ClientConnection,
+  type Stream,
 } from "@agentclientprotocol/sdk";
 import type {
   ClientCapabilities,
@@ -139,11 +140,20 @@ export interface AcpTerminalHandlers {
 export type AcpDevtoolsEvent =
   | { type: "acp:turn-start"; sessionId: string }
   | { type: "acp:turn-end"; sessionId: string; stopReason: string }
-  | { type: "acp:update"; sessionId: string; kind: string }
+  | {
+      type: "acp:update";
+      sessionId: string;
+      kind: string;
+      /** tool_call / tool_call_update only: enough to render a timeline row. */
+      toolCallId?: string;
+      status?: string;
+      title?: string;
+    }
   | { type: "acp:permission-request"; sessionId: string; options: number }
   | { type: "acp:permission-decision"; sessionId: string; outcome: "selected" | "cancelled"; optionId?: string }
   | { type: "acp:status"; peer: string; state: ConnectivityState }
   | { type: "acp:cancel"; sessionId: string }
+  | { type: "acp:wire"; dir: "in" | "out"; method?: string; id?: string | number }
   | { type: "acp:fs"; sessionId: string; op: "readTextFile" | "writeTextFile"; path: string }
   | {
       type: "acp:terminal";
@@ -372,7 +382,10 @@ export class AcpQuery {
    * (a second `connect()` while connected throws). `opts.name` labels the
    * agent in broker interactions and audit entries.
    */
-  connect(agentOrStream: Parameters<ClientApp["connect"]>[0], opts: ConnectOptions = {}): ClientConnection {
+  connect(
+    agentOrStream: Stream | Parameters<ClientApp["connect"]>[0],
+    opts: ConnectOptions = {},
+  ): ClientConnection {
     if (this.conn) {
       throw new Error("AcpQuery: already connected — close() before connecting again");
     }
@@ -530,7 +543,20 @@ export class AcpQuery {
     const state = this.ensureState(sessionId);
     state.updates = [...state.updates, update];
     const kind = String(update.sessionUpdate ?? "");
-    this.devtools?.emit({ type: "acp:update", sessionId, kind });
+    this.devtools?.emit({
+      type: "acp:update",
+      sessionId,
+      kind,
+      // Tool-call rows carry enough to render a timeline without digging into
+      // SessionState.updates: the id, latest status, and title (when sent).
+      ...(kind === "tool_call" || kind === "tool_call_update"
+        ? {
+            ...(typeof update.toolCallId === "string" ? { toolCallId: update.toolCallId } : {}),
+            ...(typeof update.status === "string" ? { status: update.status } : {}),
+            ...(typeof update.title === "string" ? { title: update.title } : {}),
+          }
+        : {}),
+    });
     switch (kind) {
       case "agent_message_chunk": {
         const content = update.content as { type?: string; text?: string } | undefined;

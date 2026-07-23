@@ -36,7 +36,14 @@ describe("devtools emission", () => {
       { type: "acp:turn-start", sessionId: sid },
       { type: "acp:update", sessionId: sid, kind: "agent_message_chunk" },
       { type: "acp:update", sessionId: sid, kind: "agent_message_chunk" },
-      { type: "acp:update", sessionId: sid, kind: "tool_call" },
+      {
+        type: "acp:update",
+        sessionId: sid,
+        kind: "tool_call",
+        toolCallId: "tc1",
+        status: "completed",
+        title: "read file",
+      },
       { type: "acp:turn-end", sessionId: sid, stopReason: "end_turn" },
     ]);
     // Status transitions ride the same hub.

@@ -167,6 +167,20 @@ Permission events are emitted at the wire boundary, so every path — broker
 `ask`, auto policy, no-broker fail-safe, and the cancel sweep — produces the
 same request/decision pair. When no sink is configured, nothing is emitted.
 
+Tool-call folds carry `toolCallId` / `status` / `title` on the `acp:update`
+event itself, so a timeline panel can render tool rows (id, latest status,
+title) without re-deriving them from `SessionState.updates`.
+
+**Two strata, one hub.** The semantic events above describe what acpq *did*;
+`instrumentAcpStream` adds what the *wire* carried. It is the acpq face of
+core's `instrumentTransport` idea, reshaped for the SDK's `Stream` (paired
+readable/writable of JSON-RPC messages, tapped with pass-through
+`TransformStream`s) rather than an `onmessage`/`send` transport object. Both
+strata land on the same sink in arrival order, so a panel can interleave them
+— `session/prompt` goes out, updates stream in, each one folds. In-process
+`connect(agentApp)` bypasses streams entirely and therefore can't be tapped;
+that's the correct trade — there is no wire, so there is nothing to lie about.
+
 ## Client capabilities: default OFF, user callbacks only
 
 ACP inverts the usual direction for two method groups: `fs/*` and `terminal/*`
