@@ -41,7 +41,7 @@
     "example:06": "tsx examples/06-cancel.ts"
   },
   "dependencies": {
-    "@johnhenry/agent-query-core": "0.1.0-rc.1"
+    "@johnhenry/agent-query-core": "0.1.0-rc.3"
   },
   "peerDependencies": {
     "@agentclientprotocol/sdk": "1.3.0"
