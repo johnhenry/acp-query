@@ -37,6 +37,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from "@agentclientprotocol/sdk";
+import { AcpSessionHandle } from "./session.js";
 import {
   InteractionBroker,
   QueryCache,
@@ -609,6 +610,23 @@ export class AcpQuery {
   }
   subscribe(sessionId: string, fn: () => void): () => void {
     return this.cache.subscribe({ kind: "session", id: sessionId }, fn);
+  }
+
+  /**
+   * Bind one sessionId to a thin handle: `prompt` / `cancel` / `state` /
+   * `subscribe` / `toolCalls` / `states()` without re-passing the id. Pure
+   * sugar — every call delegates to the corresponding AcpQuery method, so the
+   * store stays the single source of truth (handles for the same session see
+   * identical state). Works for ids from `newSession()`, `listSessions()`, or
+   * sessions established elsewhere.
+   */
+  attach(sessionId: string): AcpSessionHandle {
+    return new AcpSessionHandle(this, sessionId);
+  }
+
+  /** `newSession()` + `attach()` in one step. */
+  async newAttachedSession(cwd = "/"): Promise<AcpSessionHandle> {
+    return this.attach(await this.newSession(cwd));
   }
 
   /**

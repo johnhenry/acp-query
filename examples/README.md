@@ -17,6 +17,7 @@ protocol routing. Run any with `npx tsx examples/<file>` (or `npm run example:NN
 | 08 | [`08-client-capabilities.ts`](./08-client-capabilities.ts) | fs + terminal callbacks, capability advertising, gated writes | `npm run example:08` |
 | 09 | [`09-wire-timeline.ts`](./09-wire-timeline.ts) | instrumentAcpStream: wire messages + semantic events, one interleaved timeline | `npm run example:09` |
 | 10 | [`10-session-list-load.ts`](./10-session-list-load.ts) | cached session/list, session/load replay-as-reconcile, commands cache | `npm run example:10` |
+| 11 | [`11-attached-session.ts`](./11-attached-session.ts) | AcpSessionHandle: bound prompt/cancel/state + states() async iterable | `npm run example:11` |
 
 To point any of these at a **real** agent, replace the `mockAcpAgent(...)` argument
 with a transport stream (`ndJsonStream` over a spawned agent's stdio, a WebSocket, …)

@@ -42,7 +42,8 @@
     "example:07": "tsx examples/07-devtools-timeline.ts",
     "example:08": "tsx examples/08-client-capabilities.ts",
     "example:09": "tsx examples/09-wire-timeline.ts",
-    "example:10": "tsx examples/10-session-list-load.ts"
+    "example:10": "tsx examples/10-session-list-load.ts",
+    "example:11": "tsx examples/11-attached-session.ts"
   },
   "dependencies": {
     "@johnhenry/agent-query-core": "0.1.0-rc.3"

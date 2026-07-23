@@ -13,6 +13,7 @@ export type {
   SessionState,
   ToolCallState,
 } from "./client.js";
+export { AcpSessionHandle } from "./session.js";
 export { instrumentAcpStream } from "./instrument.js";
 export { DevtoolsHub, InteractionBroker, QueryCache, StatusStore } from "@johnhenry/agent-query-core";
 export type {

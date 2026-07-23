@@ -140,6 +140,35 @@ precisely so this path is expressible through the broker's ordinary resolve
 machinery (and so a UI can offer a "dismiss" affordance with the same
 semantics).
 
+## One canonical route into the store
+
+The SDK ships its own streamed-prompt ergonomics: `ctx.buildSession(cwd)` →
+`ActiveSession`, with `prompt()`, `nextUpdate()` (a per-session async queue of
+updates + the final stop) and `readText()`. Should acpq wrap it?
+
+Evaluated and rejected. `ActiveSession` routes `session/update` notifications
+into a **private queue per wrapper** — a second consumer of the very stream
+acpq's `ClientApp` handler already folds into the store. Wrapping it would
+create two routes into client state (the fold *and* the queue) with two
+delivery disciplines, and subtle disagreement modes: a queue drained late
+shows a past the store has already left; a wrapper disposed early silently
+drops updates the store still folds. One source of truth is the entire point
+of a client-state layer, so the raw request path (`prompt()` →
+`session/update` handler → fold) stays the **one canonical route into the
+store**.
+
+What the SDK's wrapper is actually *for* — not re-passing the sessionId, and
+consuming a turn as a stream — acpq provides on top of its own store instead:
+`attach(sessionId)` returns an `AcpSessionHandle` whose every method is pure
+delegation (`prompt`/`cancel`/`load`/`state`/`toolCalls`/`commands`/
+`subscribe` — zero logic, so handles can't drift from the store), and
+`states()` is the streaming read: an async iterable of folded snapshots
+rather than raw updates. Where `nextUpdate()` hands you deltas to interpret,
+`states()` hands you the interpretation — and because it yields *snapshots*,
+a slow consumer coalesces bursts into the latest state instead of queueing a
+backlog of stale deltas (sound precisely because the fold makes each snapshot
+subsume its predecessors).
+
 ## Observability: status and devtools
 
 ### Status semantics

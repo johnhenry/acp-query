@@ -8,6 +8,7 @@ The complete public surface of `@johnhenry/acpq`. Conceptual background lives in
   - [`newSession` / `prompt` / `cancel`](#newsession--prompt--cancel)
   - [`listSessions` / `loadSession` / `commands`](#listsessions--loadsession--commands-cacheable-reads)
   - [`session` / `subscribe`](#session--subscribe-reactive-access)
+  - [`attach` / `newAttachedSession` — `AcpSessionHandle`](#attach--newattachedsession--acpsessionhandle)
   - [`status` — peer connectivity](#status--peer-connectivity)
   - [Client capabilities: `fs` / `terminal` / `gateWrites`](#client-capabilities-fs--terminal--gatewrites)
   - [Devtools events](#devtools-events)
@@ -139,6 +140,47 @@ const unsub = q.subscribe(sid, () => {
   works and the pair is `useSyncExternalStore`-ready.
 - `subscribe(sessionId, fn): () => void` — notify on every state change;
   returns the unsubscribe function.
+
+### `attach` / `newAttachedSession` — `AcpSessionHandle`
+
+Bound-session sugar: a handle that pins one sessionId so you stop re-passing
+it. **Pure delegation** — every method calls the corresponding `AcpQuery`
+method, the store stays the single source of truth, and any number of handles
+on the same id see identical state.
+
+```ts
+const h = await q.newAttachedSession("/workspace"); // newSession + attach
+const h2 = q.attach(existingId);                    // any id: listSessions(), another client, …
+
+h.sessionId;              // the bound id
+await h.prompt("fix it"); // q.prompt(id, …)
+await h.cancel();         // q.cancel(id)
+await h.load("/ws");      // q.loadSession(id, …)
+h.state();                // q.session(id)
+h.toolCalls();            // ToolCallState[] (insertion order)
+h.commands();             // q.commands(id)
+h.subscribe(fn);          // q.subscribe(id, fn)
+```
+
+**`h.states()`** exposes the fold as an async iterable of snapshots: the
+current snapshot immediately (when one exists), then the latest snapshot per
+change — bursts arriving while the consumer is busy **coalesce** into one
+yield of the newest state (sound because it's a fold: the latest snapshot
+subsumes the missed ones). The stream is endless by design; `break`
+unsubscribes:
+
+```ts
+const turn = h.prompt("go");
+for await (const s of h.states()) {
+  render(s);
+  if (s.lastStopReason) break; // turn done
+}
+await turn;
+```
+
+acpq deliberately does **not** wrap the SDK's `ActiveSession` — see
+[design.md](./design.md#one-canonical-route-into-the-store) for why. See
+[`examples/11-attached-session.ts`](../examples/11-attached-session.ts).
 
 ### `status` — peer connectivity
 
