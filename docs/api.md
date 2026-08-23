@@ -1,6 +1,6 @@
 # API reference — every export, with an example
 
-The complete public surface of `@johnhenry/acpq`. Conceptual background lives in
+The complete public surface of `@johnhenry/acp-query`. Conceptual background lives in
 [design.md](./design.md); runnable demos in [`examples/`](../examples).
 
 - [`AcpQuery`](#acpquery)
@@ -16,8 +16,8 @@ The complete public surface of `@johnhenry/acpq`. Conceptual background lives in
 - [Permissions: `PermissionDecision`, `PermissionOption`](#permissions)
 - [Cache keys: `AcpKey`, `serializeAcpKey`, `sessionTag`](#cache-keys)
 - [Re-exports from agent-query-core](#re-exports-from-agent-query-core)
-- [`@johnhenry/acpq/react` — hooks](#johnhenryacpqreact--hooks)
-- [`@johnhenry/acpq/testing` — `mockAcpAgent`](#johnhenryacpqtesting--mockacpagent)
+- [`@johnhenry/acp-query/react` — hooks](#johnhenryacpqreact--hooks)
+- [`@johnhenry/acp-query/testing` — `mockAcpAgent`](#johnhenryacpqtesting--mockacpagent)
 
 ---
 
@@ -31,10 +31,10 @@ The store/client. Owns a `ClientApp` (from the official SDK) with
 ### Construction
 
 ```ts
-import { AcpQuery, InteractionBroker } from "@johnhenry/acpq";
+import { AcpQuery, InteractionBroker } from "@johnhenry/acp-query";
 
 const q = new AcpQuery({
-  name: "my-editor",                    // client identity advertised to agents (default "acpq")
+  name: "my-editor",                    // client identity advertised to agents (default "acp-query")
   interactions: new InteractionBroker(),// optional permission broker — see below
   status: sharedStatusStore,            // optional; default: a fresh StatusStore
   devtools: new DevtoolsHub(),          // optional devtools sink; no-op when absent
@@ -53,7 +53,7 @@ before connecting).
 ### `connect` / `close`
 
 ```ts
-import { mockAcpAgent } from "@johnhenry/acpq/testing";
+import { mockAcpAgent } from "@johnhenry/acp-query/testing";
 
 // In-process AgentApp (tests, examples) — or any SDK Stream (ndJsonStream
 // over stdio, WebSocket, …). Both go through the same overload.
@@ -116,7 +116,7 @@ q.subscribeCommands(sid, fn);     // notify only when the commands change
   `{kind: "session-list", cwd?}` and observable via `q.cache`.
 - **`loadSession(sessionId, cwd = "/")`** implements the family's
   reconcile-read rule: the agent replays the session's history as ordinary
-  `session/update` notifications, so acpq **discards any pre-existing folded
+  `session/update` notifications, so acp-query **discards any pre-existing folded
   state first** — the replay is the complete truth, and folding onto leftovers
   would double-count. Subscribers stay attached and watch the replay live.
   Resolves with the replayed `SessionState`; `currentMode` is seeded from the
@@ -179,7 +179,7 @@ for await (const s of h.states()) {
 await turn;
 ```
 
-acpq deliberately does **not** wrap the SDK's `ActiveSession` — see
+acp-query deliberately does **not** wrap the SDK's `ActiveSession` — see
 [design.md](./design.md#one-canonical-route-into-the-store) for why. See
 [`examples/11-attached-session.ts`](../examples/11-attached-session.ts).
 
@@ -188,7 +188,7 @@ acpq deliberately does **not** wrap the SDK's `ActiveSession` — see
 `q.status` is a `StatusStore` (from agent-query-core) tracking the agent's
 connectivity under the peer name given to `connect()` (`ConnectOptions.name`,
 default `"agent"`). Inject a shared store via `AcpQueryConfig.status` to
-aggregate acpq's peer alongside other adapters'.
+aggregate acp-query's peer alongside other adapters'.
 
 Lifecycle: **`connecting`** when `connect()` is called (the SDK's `connect()`
 is synchronous and performs no I/O — nothing goes over the wire until the
@@ -200,7 +200,7 @@ connection dies out from under us; a reconnect walks
 `connecting → ready` again.
 
 ```ts
-import { AcpQuery, StatusStore } from "@johnhenry/acpq";
+import { AcpQuery, StatusStore } from "@johnhenry/acp-query";
 
 const status = new StatusStore(); // or share one across adapters
 const q = new AcpQuery({ status });
@@ -213,20 +213,20 @@ await q.close();                             // → state "closed"
 
 **No retry on `prompt()`.** A prompt turn is non-idempotent — by the time a
 request fails the agent may already have streamed text, run tools, or asked
-permissions — so acpq never retries it, honoring the core's `withRetry`
+permissions — so acp-query never retries it, honoring the core's `withRetry`
 contract (retries only under an explicit `idempotent: true` assertion).
 Recovery is the app's call: re-prompt or start a fresh session.
 
 ### Client capabilities: `fs` / `terminal` / `gateWrites`
 
-ACP agents can ask the *client* to read/write files and run terminals. acpq's
+ACP agents can ask the *client* to read/write files and run terminals. acp-query's
 security default is **OFF**: no fs or terminal handler exists unless you supply
 the callback in config, and nothing built-in touches a real filesystem or
 spawns processes — the library only wires **your** callbacks onto the SDK's
 handlers and advertises the matching capabilities.
 
 ```ts
-import { AcpQuery, type AcpFsHandlers, type AcpTerminalHandlers } from "@johnhenry/acpq";
+import { AcpQuery, type AcpFsHandlers, type AcpTerminalHandlers } from "@johnhenry/acp-query";
 
 const q = new AcpQuery({
   fs: {                        // register either, both, or neither
@@ -251,7 +251,7 @@ await q.initialize();    // sends `initialize` advertising exactly those capabil
 - **Method shapes are the SDK's own** (`ReadTextFileRequest` →
   `ReadTextFileResponse`, etc.) — params arrive schema-validated; whatever your
   callback returns goes back on the wire. Callbacks may be sync or async;
-  `writeTextFile` / `release` / `kill` may return `void` (acpq answers `{}`).
+  `writeTextFile` / `release` / `kill` may return `void` (acp-query answers `{}`).
 - **`clientCapabilities()`** derives the `ClientCapabilities` object from
   config: per-callback `fs` flags, `terminal: true` only with the full group.
   **`initialize()`** sends it (with `PROTOCOL_VERSION`); real agents gate their
@@ -270,7 +270,7 @@ See [`examples/08-client-capabilities.ts`](../examples/08-client-capabilities.ts
 ### Devtools events
 
 Pass any `DevtoolsSink` (canonically a `DevtoolsHub`) as
-`AcpQueryConfig.devtools` and acpq emits compact, serializable events; with no
+`AcpQueryConfig.devtools` and acp-query emits compact, serializable events; with no
 sink configured, emission is a no-op. The vocabulary (`AcpDevtoolsEvent`):
 
 | `type` | Payload | Emitted |
@@ -286,7 +286,7 @@ sink configured, emission is a no-op. The vocabulary (`AcpDevtoolsEvent`):
 | `acp:terminal` | `{sessionId, op, command?, terminalId?}` | each terminal handler invocation (`op` ∈ create/output/release/waitForExit/kill) |
 
 ```ts
-import { AcpQuery, DevtoolsHub, type AcpDevtoolsEvent } from "@johnhenry/acpq";
+import { AcpQuery, DevtoolsHub, type AcpDevtoolsEvent } from "@johnhenry/acp-query";
 
 const hub = new DevtoolsHub<AcpDevtoolsEvent>();
 const q = new AcpQuery({ devtools: hub });
@@ -309,7 +309,7 @@ response; an id-less one a notification). The tap is transparent — messages
 pass through unchanged.
 
 ```ts
-import { AcpQuery, DevtoolsHub, instrumentAcpStream } from "@johnhenry/acpq";
+import { AcpQuery, DevtoolsHub, instrumentAcpStream } from "@johnhenry/acp-query";
 import { ndJsonStream } from "@agentclientprotocol/sdk";
 
 const hub = new DevtoolsHub<AcpDevtoolsEvent>();
@@ -344,7 +344,7 @@ interface ToolCallState {
 }
 ```
 
-Update kinds acpq doesn't fold specially (`agent_thought_chunk`,
+Update kinds acp-query doesn't fold specially (`agent_thought_chunk`,
 `usage_update`, …) still land in `updates[]` — the devtools/escape hatch.
 An update for a sessionId the store has never seen creates its state
 implicitly (agents may stream for sessions established elsewhere, e.g.
@@ -358,7 +358,7 @@ request is answered `{outcome: "cancelled"}` when the agent offered no reject
 option.
 
 ```ts
-import { InteractionBroker, type PermissionDecision } from "@johnhenry/acpq";
+import { InteractionBroker, type PermissionDecision } from "@johnhenry/acp-query";
 
 const broker = new InteractionBroker<PermissionDecision>({
   policy: ({ peer, payload }) => "ask", // "allow" | "deny" | "ask" (default: ask)
@@ -396,7 +396,7 @@ Decision → wire mapping, in precedence order:
 For apps composing on `q.cache` directly (devtools, persistence, invalidation):
 
 ```ts
-import { type AcpKey, serializeAcpKey, sessionTag, sessionsTag } from "@johnhenry/acpq";
+import { type AcpKey, serializeAcpKey, sessionTag, sessionsTag } from "@johnhenry/acp-query";
 
 const key: AcpKey = { kind: "session", id: sid };
 serializeAcpKey(key);      // '["session","sess-1"]' — the cache's canonical string key
@@ -416,7 +416,7 @@ need a single import: `DevtoolsHub`, `InteractionBroker`, `QueryCache`,
 `StatusStore` (values) and `AuditEntry`, `BaseDecision`, `ConnectivityState`,
 `DevtoolsSink`, `Interaction`, `PeerStatus`, `PolicyVerdict` (types).
 
-## `@johnhenry/acpq/react` — hooks
+## `@johnhenry/acp-query/react` — hooks
 
 Thin hooks over the store, built on agent-query-core's react bindings
 (`useSyncExternalStore` underneath): no resubscribe churn on inline keys, no
@@ -424,7 +424,7 @@ re-render on structurally-equal rewrites, SSR-deterministic first paint.
 React is an **optional peer dependency** — only this subpath touches it.
 
 ```tsx
-import { useSession, useToolCalls, usePermissions } from "@johnhenry/acpq/react";
+import { useSession, useToolCalls, usePermissions } from "@johnhenry/acp-query/react";
 
 function Turn({ q, sid }: { q: AcpQuery; sid: string }) {
   const state = useSession(q, sid);          // SessionState | undefined, per fold
@@ -460,13 +460,13 @@ function Turn({ q, sid }: { q: AcpQuery; sid: string }) {
 
 Tested with real renders in [`test/react.dom.test.tsx`](../test/react.dom.test.tsx).
 
-## `@johnhenry/acpq/testing` — `mockAcpAgent`
+## `@johnhenry/acp-query/testing` — `mockAcpAgent`
 
 An in-process ACP agent built on the SDK's own `agent()` builder — real
 protocol, no transport. Drives every test and example in this repo.
 
 ```ts
-import { mockAcpAgent } from "@johnhenry/acpq/testing";
+import { mockAcpAgent } from "@johnhenry/acp-query/testing";
 
 q.connect(mockAcpAgent({
   name: "mock",                       // AppOptions.name for diagnostics

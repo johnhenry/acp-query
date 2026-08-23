@@ -1,6 +1,6 @@
 // Every fold branch of the session store: message chunks, tool call
 // lifecycles, plan / commands / mode updates, and the raw-updates escape
-// hatch for kinds acpq doesn't fold specially.
+// hatch for kinds acp-query doesn't fold specially.
 
 import { describe, it, expect } from "vitest";
 import { AcpQuery } from "../src/index.js";
@@ -64,7 +64,7 @@ describe("fold: session/update branches", () => {
     await q.close();
   });
 
-  it("kinds acpq does not fold specially still land in updates[]", async () => {
+  it("kinds acp-query does not fold specially still land in updates[]", async () => {
     const q = new AcpQuery();
     q.connect(
       mockAcpAgent({

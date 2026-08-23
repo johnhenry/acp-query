@@ -1,6 +1,6 @@
 // AcpQuery — a reactive session/turn store + permission broker for the Agent
 // Client Protocol. The official @agentclientprotocol/sdk gives you the wire
-// (fluent client() builder, typed handlers, transports); acpq adds the state
+// (fluent client() builder, typed handlers, transports); acp-query adds the state
 // stratum an embedding app needs: session/update streams folded into a
 // cache-backed session store (hooks-ready), and session/request_permission
 // routed through the shared InteractionBroker (policy / approval queue / audit)
@@ -124,7 +124,7 @@ export const sessionsTag = "acp:sessions";
 type MaybePromise<T> = T | Promise<T>;
 
 /**
- * User-supplied file-system callbacks. **Nothing is built in**: acpq never
+ * User-supplied file-system callbacks. **Nothing is built in**: acp-query never
  * touches the real filesystem — it only wires the callbacks you provide onto
  * the SDK's `fs/read_text_file` / `fs/write_text_file` handlers and advertises
  * the matching `clientCapabilities.fs` flags. Omit a callback and the method
@@ -138,7 +138,7 @@ export interface AcpFsHandlers {
 /**
  * User-supplied terminal callbacks. ACP's `terminal` capability is
  * all-or-nothing ("the Client supports all `terminal/*` methods"), so every
- * method is required — supply the whole group or none. As with fs, acpq spawns
+ * method is required — supply the whole group or none. As with fs, acp-query spawns
  * nothing itself; it only routes the agent's requests to your callbacks.
  */
 export interface AcpTerminalHandlers {
@@ -192,12 +192,12 @@ export interface AcpQueryConfig {
   interactions?: InteractionBroker<PermissionDecision>;
   /**
    * Peer-connectivity store. Defaults to a fresh `StatusStore`; inject a
-   * shared one to aggregate acpq's agent alongside other adapters' peers.
+   * shared one to aggregate acp-query's agent alongside other adapters' peers.
    * The peer name is the `connect()` label (`ConnectOptions.name`).
    */
   status?: StatusStore;
   /**
-   * Devtools sink (e.g. a `DevtoolsHub`). When configured, acpq emits the
+   * Devtools sink (e.g. a `DevtoolsHub`). When configured, acp-query emits the
    * compact `AcpDevtoolsEvent` vocabulary (turn/update/permission/status/
    * cancel). No-op when absent.
    */
@@ -266,7 +266,7 @@ export class AcpQuery {
     this.terminal = cfg.terminal;
     this.gateWrites = cfg.gateWrites ?? false;
     this.cache = new QueryCache<AcpKey>({ serializeKey: serializeAcpKey });
-    this.app = client({ name: cfg.name ?? "acpq" })
+    this.app = client({ name: cfg.name ?? "acp-query" })
       .onNotification("session/update", (cx) => {
         const p = cx.params as { sessionId: string; update: Record<string, unknown> };
         this.fold(p.sessionId, p.update);
@@ -355,14 +355,14 @@ export class AcpQuery {
     if (!this.interactions) {
       throw new RequestError(
         -32000,
-        `acpq: ${method} denied — gateWrites is on but no interactions broker is configured`,
+        `acp-query: ${method} denied — gateWrites is on but no interactions broker is configured`,
       );
     }
     const { decision } = await this.interactions.gate(type, this.agentName, { method, params });
     if (decision.action !== "approve" || decision.cancelled) {
       throw new RequestError(
         -32000,
-        `acpq: ${method} denied by broker${decision.reason ? ` (${decision.reason})` : ""}`,
+        `acp-query: ${method} denied by broker${decision.reason ? ` (${decision.reason})` : ""}`,
       );
     }
   }
