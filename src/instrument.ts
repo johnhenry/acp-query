@@ -1,4 +1,4 @@
-// Wire tap for stream transports — the acpq face of agent-query-core's
+// Wire tap for stream transports — the acp-query face of agent-query-core's
 // instrumentTransport idea, shaped for the ACP SDK's Stream (a readable +
 // writable of JSON-RPC messages) instead of an onmessage/send transport.
 //

@@ -2,7 +2,7 @@
 
 A progression: each step adds one capability. Every example is **runnable** with no
 network and no transport — the agent side is the in-process `mockAcpAgent` from
-`@johnhenry/acpq/testing`, connected straight to `AcpQuery` over the SDK's real
+`@johnhenry/acp-query/testing`, connected straight to `AcpQuery` over the SDK's real
 protocol routing. Run any with `npx tsx examples/<file>` (or `npm run example:NN`).
 
 | # | File | Adds | Run |

@@ -2,10 +2,10 @@
 //
 // The SDK ships its own ergonomic wrapper (buildSession → ActiveSession with
 // nextUpdate()/readText()), but it routes session/update notifications into a
-// private per-wrapper queue — a SECOND consumer of the same stream acpq's
+// private per-wrapper queue — a SECOND consumer of the same stream acp-query's
 // ClientApp handler already folds into the store. Wrapping it would mean two
 // routes into client state (the store AND the queue) that can disagree. So
-// acpq deliberately does NOT wrap ActiveSession: the raw request path through
+// acp-query deliberately does NOT wrap ActiveSession: the raw request path through
 // AcpQuery stays the one canonical route into the store, and this handle is a
 // zero-logic binding of that path to one sessionId — every call delegates to
 // the same AcpQuery methods you could call directly.

@@ -1,4 +1,4 @@
-// @johnhenry/acpq/react — thin React hooks over the acpq store.
+// @johnhenry/acp-query/react — thin React hooks over the acp-query store.
 //
 // Built on agent-query-core's react bindings (useCacheEntry /
 // useInteractions), which in turn ride useSyncExternalStore — so the hooks
@@ -43,7 +43,7 @@ export function useToolCalls(q: AcpQuery, sessionId: string): ToolCallState[] {
 export interface UsePermissionsResult {
   /** Pending broker interactions of type "permission" (the approval inbox). */
   permissions: Interaction[];
-  /** Resolve one by id — typed over acpq's PermissionDecision. */
+  /** Resolve one by id — typed over acp-query's PermissionDecision. */
   resolve: (id: number, decision: PermissionDecision) => void;
 }
 
@@ -52,7 +52,7 @@ export interface UsePermissionsResult {
  * type `"permission"` (fs/terminal gate interactions from `gateWrites` are
  * excluded — filter `q.interactions` yourself for those), plus the typed
  * resolver. With no broker configured, the queue is empty and `resolve` is a
- * no-op — acpq is already fail-safe answering on its own.
+ * no-op — acp-query is already fail-safe answering on its own.
  *
  * ```tsx
  * const { permissions, resolve } = usePermissions(q);
@@ -69,7 +69,7 @@ export function usePermissions(q: AcpQuery): UsePermissionsResult {
   );
 }
 
-// The core hooks compose with acpq directly (useAuditLog(q.interactions),
+// The core hooks compose with acp-query directly (useAuditLog(q.interactions),
 // usePeerStatus(q.status), useCacheEntry(q.cache, key)) — re-exported so a
 // React app needs a single import.
 export {

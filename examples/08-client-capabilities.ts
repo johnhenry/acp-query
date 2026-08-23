@@ -14,7 +14,7 @@ import {
 } from "../src/index.js";
 import { mockAcpAgent } from "../src/testing/mockAgent.js";
 
-// ── in-memory backends: acpq itself never touches fs or spawns anything ─────
+// ── in-memory backends: acp-query itself never touches fs or spawns anything ─────
 const files: Record<string, string> = { "/workspace/README.md": "# demo\nhello from the fake fs\n" };
 const fs: AcpFsHandlers = {
   readTextFile: ({ path }) => {
