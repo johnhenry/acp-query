@@ -1,6 +1,6 @@
 {
   "name": "@johnhenry/acp-query",
-  "version": "0.0.0",
+  "version": "0.0.2",
   "description": "Reactive session/turn store + permission broker for the Agent Client Protocol \u2014 embeddable ACP client state for web UIs, notebooks, and editors. On the official @agentclientprotocol/sdk.",
   "repository": {
     "type": "git",
