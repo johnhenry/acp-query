@@ -1,7 +1,7 @@
 {
   "name": "@johnhenry/acp-query",
   "version": "0.0.0",
-  "description": "Reactive session/turn store + permission broker for the Agent Client Protocol — embeddable ACP client state for web UIs, notebooks, and editors. On the official @agentclientprotocol/sdk.",
+  "description": "Reactive session/turn store + permission broker for the Agent Client Protocol \u2014 embeddable ACP client state for web UIs, notebooks, and editors. On the official @agentclientprotocol/sdk.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/johnhenry/acp-query.git"
@@ -50,7 +50,7 @@
     "example:11": "tsx examples/11-attached-session.ts"
   },
   "dependencies": {
-    "@johnhenry/agent-query-core": "0.1.0-rc.3"
+    "@johnhenry/agent-query-core": "0.1.0"
   },
   "peerDependencies": {
     "@agentclientprotocol/sdk": "1.3.0",
