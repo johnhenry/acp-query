@@ -47,12 +47,8 @@ JSON-RPC message alongside the semantic event stream), **`session/list` /
 ## Install
 
 ```sh
-npm install @johnhenry/acp-query@rc
+npm install @johnhenry/acp-query
 ```
-
-Use the `rc` dist-tag, not `latest` — `latest` is still pinned to acp-query's very
-first publish (`0.1.0-rc.1`); every subsequent release, including the current
-one, ships under `rc` until acp-query cuts a stable `1.0.0`.
 
 ## Supported protocol versions
 
@@ -94,8 +90,9 @@ Cancellation honors the ACP contract end to end: `cancel(sessionId)` sends
 with `{outcome: "cancelled"}`, so blocked turns finish with
 `stopReason: "cancelled"` instead of hanging.
 
-Status: **release candidate** (`0.1.0-rc.4`, on `@agentclientprotocol/sdk@1.3.0`
-pinned, wire protocol v1). Part of the
+Status: **pre-1.0**, on `@agentclientprotocol/sdk@1.3.0`
+pinned, wire protocol v1 — see `package.json` for the current published version
+rather than trusting a number in prose, which drifts. Part of the
 [agent-query family](https://github.com/johnhenry/agent-query-core) — shared engine
 `@johnhenry/agent-query-core`; siblings `@johnhenry/mcp-query` (MCP) and `@johnhenry/a2a-query` (A2A).
 
