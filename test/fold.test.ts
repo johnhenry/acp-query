@@ -3,7 +3,7 @@
 // hatch for kinds acp-query doesn't fold specially.
 
 import { describe, it, expect } from "vitest";
-import { AcpQuery } from "../src/index.js";
+import { AcpQuery, DevtoolsHub, type AcpDevtoolsEvent } from "../src/index.js";
 import { mockAcpAgent } from "../src/testing/mockAgent.js";
 
 describe("fold: session/update branches", () => {
@@ -137,6 +137,59 @@ describe("fold: session/update branches", () => {
     expect(ghost.updates).toHaveLength(1);
     // The prompting session saw none of it.
     expect(q.session(sid)!.updates).toHaveLength(0);
+    await q.close();
+  });
+
+  it("caps state.updates growth from an endless stream of notifications (maxUpdates)", async () => {
+    const hub = new DevtoolsHub<AcpDevtoolsEvent>();
+    const q = new AcpQuery({ devtools: hub, maxUpdates: 5 });
+    q.connect(
+      mockAcpAgent({
+        onPrompt: async ({ update }) => {
+          // A misbehaving/adversarial agent streaming far more updates than
+          // any reasonable session should ever accumulate.
+          for (let i = 0; i < 50; i++) {
+            await update({ sessionUpdate: "usage_update", used: i, size: 200000 });
+          }
+        },
+      }),
+    );
+    const sid = await q.newSession();
+    await q.prompt(sid, "hi");
+
+    const state = q.session(sid)!;
+    expect(state.updates.length).toBeLessThanOrEqual(5);
+    expect(state.updates.length).toBe(5); // growth actually stopped, not just slowed
+    expect(state.updatesCapped).toBe(true);
+
+    const capped = hub.events().filter((e) => e.type === "acp:capped");
+    expect(capped).toHaveLength(1); // fires once, not once per dropped update
+    expect(capped[0]).toMatchObject({ sessionId: sid, what: "updates", limit: 5 });
+    await q.close();
+  });
+
+  it("caps state.messageText growth from an endless stream of message chunks (maxMessageTextLength)", async () => {
+    const hub = new DevtoolsHub<AcpDevtoolsEvent>();
+    const q = new AcpQuery({ devtools: hub, maxMessageTextLength: 20 });
+    q.connect(
+      mockAcpAgent({
+        onPrompt: async ({ say }) => {
+          for (let i = 0; i < 20; i++) {
+            await say("0123456789"); // 10 chars each — well past the 20-char cap
+          }
+        },
+      }),
+    );
+    const sid = await q.newSession();
+    await q.prompt(sid, "hi");
+
+    const state = q.session(sid)!;
+    expect(state.messageText.length).toBeLessThanOrEqual(20);
+    expect(state.messageTextCapped).toBe(true);
+
+    const capped = hub.events().filter((e) => e.type === "acp:capped" && e.what === "messageText");
+    expect(capped).toHaveLength(1); // fires once, not once per dropped chunk
+    expect(capped[0]).toMatchObject({ sessionId: sid, what: "messageText", limit: 20 });
     await q.close();
   });
 });
