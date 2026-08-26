@@ -98,6 +98,18 @@ export interface SessionState {
   lastStopReason?: string;
   /** Every raw update, in arrival order (devtools / escape hatch). */
   updates: unknown[];
+  /**
+   * True once `updates` hit `AcpQueryConfig.maxUpdates` and further raw
+   * updates stopped being appended (already-accumulated ones are kept).
+   * Folding into `messageText`/`toolCalls`/etc. continues regardless — only
+   * the raw `updates` log itself is capped.
+   */
+  updatesCapped?: boolean;
+  /**
+   * True once `messageText` hit `AcpQueryConfig.maxMessageTextLength` and
+   * further agent-message text stopped being appended.
+   */
+  messageTextCapped?: boolean;
 }
 
 export type AcpKey =
@@ -116,6 +128,11 @@ export const serializeAcpKey = (k: AcpKey): string => {
   }
 };
 export const sessionTag = (id: string): string => `session:${id}`;
+
+/** Default cap for `AcpQueryConfig.maxUpdates` — see `SessionState.updates`. */
+const DEFAULT_MAX_UPDATES = 10_000;
+/** Default cap for `AcpQueryConfig.maxMessageTextLength` — see `SessionState.messageText`. */
+const DEFAULT_MAX_MESSAGE_TEXT_LENGTH = 5_000_000;
 /** Tag on every cached session/list entry — invalidated when membership changes. */
 export const sessionsTag = "acp:sessions";
 
@@ -179,7 +196,14 @@ export type AcpDevtoolsEvent =
       op: "create" | "output" | "release" | "waitForExit" | "kill";
       command?: string;
       terminalId?: string;
-    };
+    }
+  /**
+   * A session-state accumulator (`updates` or `messageText`) hit its
+   * configured cap — further growth on that field stopped (see
+   * `AcpQueryConfig.maxUpdates` / `maxMessageTextLength`). Fires once per
+   * field per session, when the cap is first reached.
+   */
+  | { type: "acp:capped"; sessionId: string; what: "updates" | "messageText"; limit: number };
 
 export interface AcpQueryConfig {
   /** Client identity advertised to agents. */
@@ -226,6 +250,23 @@ export interface AcpQueryConfig {
    * repeat calls return the cache without touching the agent. Default 30_000.
    */
   listStaleTime?: number;
+  /**
+   * Cap on how many raw `session/update` notifications `SessionState.updates`
+   * accumulates for the life of a session. Every notification streamed for a
+   * session — potentially many per agent turn — is appended by default with
+   * no rotation/truncation, so a long-running session grows this without
+   * bound. Once the cap is reached, further updates stop being appended
+   * (`SessionState.updatesCapped` is set true, and an `acp:capped` devtools
+   * event fires once); folding into `messageText`/`toolCalls`/etc. is
+   * unaffected. Default 10,000.
+   */
+  maxUpdates?: number;
+  /**
+   * Cap (in UTF-16 code units) on `SessionState.messageText`'s accumulated
+   * length. Same drop-and-signal behavior as `maxUpdates` once reached, via
+   * `SessionState.messageTextCapped`. Default 5,000,000 (~5MB of text).
+   */
+  maxMessageTextLength?: number;
 }
 
 export interface ConnectOptions {
@@ -256,6 +297,8 @@ export class AcpQuery {
   private terminal?: AcpTerminalHandlers;
   private gateWrites: boolean;
   private listStaleTime: number;
+  private maxUpdates: number;
+  private maxMessageTextLength: number;
 
   constructor(cfg: AcpQueryConfig = {}) {
     this.listStaleTime = cfg.listStaleTime ?? 30_000;
@@ -265,6 +308,8 @@ export class AcpQuery {
     this.fs = cfg.fs;
     this.terminal = cfg.terminal;
     this.gateWrites = cfg.gateWrites ?? false;
+    this.maxUpdates = cfg.maxUpdates ?? DEFAULT_MAX_UPDATES;
+    this.maxMessageTextLength = cfg.maxMessageTextLength ?? DEFAULT_MAX_MESSAGE_TEXT_LENGTH;
     this.cache = new QueryCache<AcpKey>({ serializeKey: serializeAcpKey });
     this.app = client({ name: cfg.name ?? "acp-query" })
       .onNotification("session/update", (cx) => {
@@ -669,7 +714,16 @@ export class AcpQuery {
    */
   private fold(sessionId: string, update: Record<string, unknown>): void {
     const state = this.ensureState(sessionId);
-    state.updates = [...state.updates, update];
+    // Every session/update notification for the life of a session lands here —
+    // potentially many per agent turn. Cap the raw log so a long-running (or
+    // adversarial/misbehaving) stream can't grow it without bound; the fold
+    // into messageText/toolCalls/etc. below still happens regardless.
+    if (state.updates.length < this.maxUpdates) {
+      state.updates = [...state.updates, update];
+    } else if (!state.updatesCapped) {
+      state.updatesCapped = true;
+      this.devtools?.emit({ type: "acp:capped", sessionId, what: "updates", limit: this.maxUpdates });
+    }
     const kind = String(update.sessionUpdate ?? "");
     this.devtools?.emit({
       type: "acp:update",
@@ -689,7 +743,14 @@ export class AcpQuery {
       case "agent_message_chunk": {
         const content = update.content as { type?: string; text?: string } | undefined;
         if (content?.type === "text" && typeof content.text === "string") {
-          state.messageText += content.text;
+          // Reject the WHOLE increment once it would cross the cap, rather than
+          // appending it and capping after — keeps messageText.length <= cap always.
+          if (state.messageText.length + content.text.length <= this.maxMessageTextLength) {
+            state.messageText += content.text;
+          } else if (!state.messageTextCapped) {
+            state.messageTextCapped = true;
+            this.devtools?.emit({ type: "acp:capped", sessionId, what: "messageText", limit: this.maxMessageTextLength });
+          }
         }
         break;
       }
