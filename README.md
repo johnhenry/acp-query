@@ -1,5 +1,7 @@
 # @johnhenry/acp-query — acp-query
 
+Full documentation: [opensource.johnhenry.me/agent-query/acp-query](https://opensource.johnhenry.me/agent-query/acp-query/)
+
 **A reactive session/turn store + permission broker for the [Agent Client Protocol](https://agentclientprotocol.com).**
 
 The official [`@agentclientprotocol/sdk`](https://github.com/agentclientprotocol/typescript-sdk)
