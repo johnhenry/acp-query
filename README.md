@@ -1,5 +1,9 @@
 # @johnhenry/acp-query — acp-query
 
+[![npm version](https://img.shields.io/npm/v/%40johnhenry%2Facp-query.svg)](https://www.npmjs.com/package/@johnhenry/acp-query)
+[![CI](https://github.com/johnhenry/acp-query/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhenry/acp-query/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/%40johnhenry%2Facp-query.svg)](https://www.npmjs.com/package/@johnhenry/acp-query)
+
 Full documentation: [opensource.johnhenry.me/agent-query/acp-query](https://opensource.johnhenry.me/agent-query/acp-query/)
 
 **A reactive session/turn store + permission broker for the [Agent Client Protocol](https://agentclientprotocol.com).**
