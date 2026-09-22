@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/%40johnhenry%2Facp-query.svg)](https://www.npmjs.com/package/@johnhenry/acp-query)
 [![CI](https://github.com/johnhenry/acp-query/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhenry/acp-query/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/%40johnhenry%2Facp-query.svg)](https://www.npmjs.com/package/@johnhenry/acp-query)
+[![license](https://img.shields.io/npm/l/%40johnhenry%2Facp-query.svg)](LICENSE)
 
 Full documentation: [opensource.johnhenry.me/agent-query/acp-query](https://opensource.johnhenry.me/agent-query/acp-query/)
 
