@@ -2,8 +2,8 @@
 
 `@johnhenry/acp-query` — a reactive session/turn store + permission broker for
 the [Agent Client Protocol](https://agentclientprotocol.com). Single package,
-Node >= 22 (see `engines.node`; the family standard is `>=26` but this repo
-verifies on 22 in CI — a Phase 0 decision, not an oversight), Vitest
+Node >= 26 (the family floor; `engines.node`, CI, and `.nvmrc` agree, and the
+`*-query` repos move together), Vitest
 (`npm test`), builds to `dist/` via `tsc -p tsconfig.build.json`.
 `session/request_permission` is the trust boundary: read `## Security model`
 in `README.md` before touching `src/client.ts`'s permission or `gateWrites`
