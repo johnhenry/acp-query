@@ -460,6 +460,51 @@ function Turn({ q, sid }: { q: AcpQuery; sid: string }) {
 
 Tested with real renders in [`test/react.dom.test.tsx`](../test/react.dom.test.tsx).
 
+## Browser transport: WebSocket and Streamable HTTP
+
+`AcpQuery.connect()` takes any SDK `Stream`, so a page needs nothing from
+acp-query beyond the SDK's own (experimental) browser transports. Both are
+verified end to end by `test/browser-transport.test.ts` and
+`examples/12-browser-transport.ts` against a real local companion server.
+
+```ts
+import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
+import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
+
+const q = new AcpQuery();
+q.connect(createWebSocketStream("wss://host.example/acp?token=...")); // text frames, one JSON-RPC message each
+// or, where WebSocket is blocked by a proxy: q.connect(createHttpStream("https://host.example/acp"));
+await q.initialize();            // REQUIRED first: both transports reject any other first message
+const sid = await q.newSession("/workspace");
+await q.prompt(sid, "hello");
+```
+
+Rules that bit us while testing, worth knowing before you ship:
+
+- **`initialize()` must be the first message.** Over stdio the order is loose; both
+  browser transports refuse anything else first (`First ACP WebSocket message must
+  be initialize`), and the connection closes. Call `q.initialize()` right after
+  `connect()`.
+- **Auth.** A browser `WebSocket` cannot set headers (the SDK's `headers` option
+  only applies to Node `ws`). Put a short-lived token in the URL or a subprotocol,
+  or rely on a cookie, and verify it at the HTTP upgrade, before the agent is
+  attached. `createHttpStream` accepts `headers` and `fetch`, so a bearer token
+  works there. Never reuse a long-lived credential as a URL token (URLs are logged).
+- **Origin.** CORS does not apply to WebSockets; the server must check the `Origin`
+  header itself against an allowlist. For Streamable HTTP the usual CORS rules apply
+  to the companion's responses.
+- **The companion.** An ACP agent is usually a stdio process; the host serves it
+  with the SDK's `AcpServer` (`experimental/server`) plus the Node adapter
+  (`experimental/node`: `createNodeHttpHandler`, `createNodeWebSocketUpgradeHandler`),
+  routing each connection to an `AgentApp` or an `ndJsonStream` bridge to the child.
+  `test/support/wsCompanion.ts` is a complete ~50-line example with token and Origin checks.
+- **Reconnect.** The SDK does not replay in-flight messages. After a drop, make a
+  new stream, `initialize()`, and `loadSession()` (see Sessions) to rebuild state.
+- The SDK marks these entry points `experimental`; the SDK is pinned exactly
+  (`1.3.0`), so they cannot shift under you without a deliberate bump.
+
+`instrumentAcpStream(stream, hub)` wraps either transport unchanged for a wire log.
+
 ## `@johnhenry/acp-query/testing` — `mockAcpAgent`
 
 An in-process ACP agent built on the SDK's own `agent()` builder — real

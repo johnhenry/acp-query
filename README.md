@@ -96,11 +96,11 @@ writing) is explicitly out of scope until it stabilizes — tracked in
   fold vocabulary; the full policy × options → outcome permission table; the
   cancel contract; observability (status semantics, devtools events, why
   `prompt()` is never retried); what the SDK provides vs what acp-query adds.
-- **[`examples/`](./examples)** — eleven graded, runnable examples (in-process
-  mock agent, no transport): basic turn → tool calls → permission inbox →
+- **[`examples/`](./examples)** — twelve graded, runnable examples (in-process
+  mock agent; #12 runs over a real WebSocket): basic turn → tool calls → permission inbox →
   policy rules → multi-session → cancel → devtools timeline → client
-  capabilities → wire timeline → session list/load → attached session.
-  `npm run example:01` … `example:11` (see [`examples/README.md`](./examples/README.md)
+  capabilities → wire timeline → session list/load → attached session → browser transport.
+  `npm run example:01` … `example:12` (see [`examples/README.md`](./examples/README.md)
   for the full table).
 
 Cancellation honors the ACP contract end to end: `cancel(sessionId)` sends
