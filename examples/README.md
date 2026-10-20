@@ -18,6 +18,7 @@ protocol routing. Run any with `npx tsx examples/<file>` (or `npm run example:NN
 | 09 | [`09-wire-timeline.ts`](./09-wire-timeline.ts) | `instrumentAcpStream` interleaves raw wire messages with the semantic event stream in arrival order | `npm run example:09` |
 | 10 | [`10-session-list-load.ts`](./10-session-list-load.ts) | `session/list` is cached and staleness-bounded; `session/load` discards stale folded state and reconciles by replaying the full history | `npm run example:10` |
 | 11 | [`11-attached-session.ts`](./11-attached-session.ts) | `AcpSessionHandle` binds `prompt`/`cancel`/`state` to one session, and `states()` yields an async iterable of folded snapshots | `npm run example:11` |
+| 12 | [`12-browser-transport.ts`](./12-browser-transport.ts) | A session over a real WebSocket using only browser APIs (`createWebSocketStream`); token + Origin checked by the host companion at the upgrade; `initialize` must be the first message | `npm run example:12` |
 
 To point any of these at a **real** agent, replace the `mockAcpAgent(...)` argument
 with a transport stream (`ndJsonStream` over a spawned agent's stdio, a WebSocket, …)

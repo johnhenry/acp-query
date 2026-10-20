@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.0
+
+- **Browser transport** (johnhenry/acp-query#19): `AcpQuery` runs a session over the
+  SDK's `createWebSocketStream` and `createHttpStream` (Streamable HTTP) against a
+  real companion server. New `docs/api.md` section "Browser transport", covering
+  `initialize()` first, URL-token auth, Origin checks, the companion and reconnect;
+  `test/browser-transport.test.ts`, `test/support/wsCompanion.ts`, and
+  `examples/12-browser-transport.ts`. `ws` and `@types/ws` added as devDependencies
+  (test companion only; nothing new at runtime).
+
 - **Node 26 is the floor** (`engines.node` `>=26.0.0`, CI and release on 26,
   `.nvmrc` 26), moved in lockstep across the `*-query` family
   (agent-query-core, a2a-query, acp-query, mcp-query), the family-wide
